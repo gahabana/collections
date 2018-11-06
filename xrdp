@@ -25,9 +25,18 @@ xrdp links:
     How to configure Postfix to use Gmail SMTP on Ubuntu 16.04 / 17.10 / 18.04
     https://devanswers.co/configure-postfix-to-use-gmail-smtp-on-ubuntu-16-04-digitalocean-droplet/
     
-    
+    SAMBA
     TIMEMACHINE
     https://www.reddit.com/r/selfhosted/comments/83vn3p/howto_make_time_machine_backups_on_a_samba/
     http://wa.rwick.com/2018/04/08/minimal-ubuntu-time-machine-backup-service/
     https://drkbl.com/ubuntu-18-samba-time-machine/
+    
+    ### script to build samba4 ... see others around:
+    https://gist.github.com/jniltinho/3eae533a95887817a1c30314051524db 
+    ## create Debian Samba4 .deb
+    https://gist.github.com/jniltinho/7a59467a8a4e5e88a8166f9e7e679e4d
+    
+    # SAMBA in Container:
+    https://github.com/dperson/samba
+    
     
