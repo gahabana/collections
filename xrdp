@@ -1,0 +1,33 @@
+xrdp links: 
+    # Gryphon scripts !!!
+    http://c-nergy.be/blog/?cat=79
+    
+    #old but good ... lxde what i used to have on 16.04
+    https://askubuntu.com/questions/53822/how-do-you-run-ubuntu-server-with-a-gui
+    
+    # build it in vbox on azure
+    http://www.techkb.onl/azure-installing-gnome-desktop-and-xrdp-to-access-an-ubuntu-1710-server/
+    # good one on XFCE4... has links for gnome etc:
+    https://www.hiroom2.com/2018/05/07/ubuntu-1804-xrdp-xfce-en/
+    # maybe ... taokls about xorgxrdp
+    https://askubuntu.com/questions/1031519/xrdp-on-ubuntu-18-04lts
+    # xfce4
+    https://superuser.com/questions/1262624/xrdp-immediately-terminated-session
+    # xrdp on ubunntu 16.04 maybe still usefull
+    https://adrhc.go.ro/blog/ubuntu-16-04-xrdp/
+    # selectinng sessions (xfc4, ubuntu etc)
+    https://askubuntu.com/questions/135483/how-to-configure-xrdp-to-start-cinnamon-as-default-desktop-session
+    # more on sessions
+    https://askubuntu.com/questions/135483/how-to-configure-xrdp-to-start-cinnamon-as-default-desktop-session
+    
+    
+    POSTFIX:
+    How to configure Postfix to use Gmail SMTP on Ubuntu 16.04 / 17.10 / 18.04
+    https://devanswers.co/configure-postfix-to-use-gmail-smtp-on-ubuntu-16-04-digitalocean-droplet/
+    
+    
+    TIMEMACHINE
+    https://www.reddit.com/r/selfhosted/comments/83vn3p/howto_make_time_machine_backups_on_a_samba/
+    http://wa.rwick.com/2018/04/08/minimal-ubuntu-time-machine-backup-service/
+    https://drkbl.com/ubuntu-18-samba-time-machine/
+    
