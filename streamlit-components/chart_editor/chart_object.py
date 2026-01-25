@@ -58,6 +58,7 @@ class ChartEditor:
         min_points: int = 0,
         max_points: Optional[int] = None,
         initial_lines: Optional[Lines] = None,
+        on_change: Optional[Callable[[Lines], None]] = None,
     ):
         """
         Initialize a ChartEditor instance.
@@ -68,6 +69,10 @@ class ChartEditor:
             Unique identifier for this chart. Used for session_state storage.
         initial_lines : Lines, optional
             Initial line data. Only used on first creation.
+        on_change : Callable[[Lines], None], optional
+            Callback function called when chart data changes.
+            Receives the new lines data as argument.
+            Called on UI edits and programmatic changes.
 
         Other parameters match chart_editor() function.
         """
@@ -87,6 +92,7 @@ class ChartEditor:
         self.disabled = disabled
         self.min_points = min_points
         self.max_points = max_points
+        self.on_change = on_change
 
         # Initialize state if needed
         if self._state_key not in st.session_state:
@@ -109,8 +115,11 @@ class ChartEditor:
     @lines.setter
     def lines(self, value: Lines):
         """Set line data directly."""
+        old_lines = self._state["lines"]
         self._state["lines"] = value
         self._state["version"] += 1
+        if value != old_lines:
+            self._trigger_on_change()
 
     @property
     def version(self) -> int:
@@ -121,6 +130,11 @@ class ChartEditor:
     def has_pending_changes(self) -> bool:
         """Check if there are unapplied changes from the UI."""
         return self._state["pending_changes"] is not None
+
+    def _trigger_on_change(self):
+        """Call the on_change callback if set."""
+        if self.on_change is not None:
+            self.on_change(self.lines)
 
     def render(self) -> Lines:
         """
@@ -157,6 +171,7 @@ class ChartEditor:
             # Store as pending changes (auto-apply for simplicity)
             self._state["lines"] = result
             self._state["version"] += 1
+            self._trigger_on_change()
 
         return self.lines
 
@@ -190,6 +205,7 @@ class ChartEditor:
         new_line = list(points) if points else []
         self._state["lines"].append(new_line)
         self._state["version"] += 1
+        self._trigger_on_change()
         return len(self._state["lines"]) - 1
 
     def remove_line(self, index: int):
@@ -197,27 +213,33 @@ class ChartEditor:
         if 0 <= index < len(self._state["lines"]):
             self._state["lines"].pop(index)
             self._state["version"] += 1
+            self._trigger_on_change()
 
     def add_horizontal_line(self, y_value: float) -> int:
         """Add a horizontal line at the given Y value."""
         line = create_horizontal_line(y_value, self.x_range)
-        return self.add_line(line)
+        return self.add_line(line)  # on_change triggered in add_line
 
     def add_vertical_line(self, x_value: float) -> int:
         """Add a vertical line at the given X value."""
         line = create_vertical_line(x_value, self.y_range)
-        return self.add_line(line)
+        return self.add_line(line)  # on_change triggered in add_line
 
     def clear(self):
         """Remove all lines."""
-        self._state["lines"] = []
-        self._state["version"] += 1
+        if self._state["lines"]:  # Only trigger if there was data
+            self._state["lines"] = []
+            self._state["version"] += 1
+            self._trigger_on_change()
 
     def reset(self, initial_lines: Optional[Lines] = None):
         """Reset to initial state."""
+        old_lines = self._state["lines"]
         self._state["lines"] = initial_lines or []
         self._state["pending_changes"] = None
         self._state["version"] += 1
+        if self._state["lines"] != old_lines:
+            self._trigger_on_change()
 
     # ==================== Persistence ====================
 
@@ -266,11 +288,14 @@ class ChartEditor:
             with open(filepath, 'r') as f:
                 data = json.load(f)
 
+            old_lines = self._state["lines"]
             self._state["lines"] = [
                 [(float(p[0]), float(p[1])) for p in line]
                 for line in data.get("lines", [])
             ]
             self._state["version"] += 1
+            if self._state["lines"] != old_lines:
+                self._trigger_on_change()
             return True
         except (json.JSONDecodeError, KeyError, TypeError):
             return False
@@ -294,8 +319,11 @@ class ChartEditor:
     def set_line(self, index: int, points: Line):
         """Set points for a specific line."""
         if 0 <= index < len(self._state["lines"]):
+            old_points = self._state["lines"][index]
             self._state["lines"][index] = list(points)
             self._state["version"] += 1
+            if list(points) != old_points:
+                self._trigger_on_change()
 
     @property
     def line_count(self) -> int:
