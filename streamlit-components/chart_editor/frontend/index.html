@@ -1,0 +1,721 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chart Editor</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: transparent;
+        }
+
+        .chart-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 10px;
+        }
+
+        .chart-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .chart-wrapper {
+            position: relative;
+            display: flex;
+            align-items: center;
+        }
+
+        .y-label {
+            writing-mode: vertical-rl;
+            text-orientation: mixed;
+            transform: rotate(180deg);
+            font-size: 12px;
+            color: #666;
+            margin-right: 5px;
+        }
+
+        .chart-area {
+            display: flex;
+            flex-direction: column;
+        }
+
+        #chartCanvas {
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            cursor: crosshair;
+            background: #fafafa;
+        }
+
+        .x-label {
+            font-size: 12px;
+            color: #666;
+            text-align: center;
+            margin-top: 5px;
+        }
+
+        .controls {
+            display: flex;
+            gap: 15px;
+            margin-top: 15px;
+            flex-wrap: wrap;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .control-group label {
+            font-size: 12px;
+            color: #555;
+        }
+
+        .control-group input {
+            width: 70px;
+            padding: 4px 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+
+        .control-group input:focus {
+            outline: none;
+            border-color: #4ECDC4;
+        }
+
+        .line-selector {
+            display: flex;
+            gap: 8px;
+            margin-top: 10px;
+        }
+
+        .line-btn {
+            padding: 6px 12px;
+            border: 2px solid;
+            border-radius: 4px;
+            background: white;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+
+        .line-btn.active {
+            color: white;
+        }
+
+        .line-btn:hover {
+            opacity: 0.8;
+        }
+
+        .add-line-btn {
+            padding: 6px 12px;
+            border: 2px dashed #999;
+            border-radius: 4px;
+            background: white;
+            cursor: pointer;
+            font-size: 12px;
+            color: #666;
+            transition: all 0.2s;
+        }
+
+        .add-line-btn:hover {
+            border-color: #4ECDC4;
+            color: #4ECDC4;
+        }
+
+        .tooltip {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            pointer-events: none;
+            z-index: 100;
+            white-space: nowrap;
+        }
+
+        .instructions {
+            font-size: 11px;
+            color: #888;
+            margin-top: 10px;
+            text-align: center;
+        }
+    </style>
+</head>
+<body>
+    <div class="chart-container">
+        <div class="chart-title" id="chartTitle"></div>
+        <div class="chart-wrapper">
+            <div class="y-label" id="yLabel"></div>
+            <div class="chart-area">
+                <canvas id="chartCanvas"></canvas>
+                <div class="x-label" id="xLabel"></div>
+            </div>
+        </div>
+        <div class="line-selector" id="lineSelector"></div>
+        <div class="controls">
+            <div class="control-group">
+                <label>X Min:</label>
+                <input type="number" id="xMin" step="any">
+            </div>
+            <div class="control-group">
+                <label>X Max:</label>
+                <input type="number" id="xMax" step="any">
+            </div>
+            <div class="control-group">
+                <label>Y Min:</label>
+                <input type="number" id="yMin" step="any">
+            </div>
+            <div class="control-group">
+                <label>Y Max:</label>
+                <input type="number" id="yMax" step="any">
+            </div>
+        </div>
+        <div class="instructions">
+            Click to add point | Click point to remove | Drag point to move
+        </div>
+    </div>
+    <div class="tooltip" id="tooltip" style="display: none;"></div>
+
+    <script>
+        // Streamlit component communication
+        function sendMessageToStreamlit(type, data) {
+            const outData = Object.assign({
+                isStreamlitMessage: true,
+                type: type,
+            }, data);
+            window.parent.postMessage(outData, "*");
+        }
+
+        function setComponentReady() {
+            sendMessageToStreamlit("streamlit:componentReady", {apiVersion: 1});
+        }
+
+        function setFrameHeight(height) {
+            sendMessageToStreamlit("streamlit:setFrameHeight", {height: height});
+        }
+
+        function setComponentValue(value) {
+            sendMessageToStreamlit("streamlit:setComponentValue", {value: value});
+        }
+
+        // Chart Editor Class
+        class ChartEditor {
+            constructor(canvas) {
+                this.canvas = canvas;
+                this.ctx = canvas.getContext('2d');
+
+                // Configuration
+                this.padding = { top: 20, right: 20, bottom: 30, left: 50 };
+                this.dotRadius = 8;
+                this.hoverRadius = 12;
+                this.lineWidth = 2;
+
+                // State
+                this.lines = [];
+                this.colors = ["#FF6B6B", "#4ECDC4", "#45B7D1"];
+                this.xRange = [0, 100];
+                this.yRange = [0, 1000];
+                this.gridSnap = null;
+                this.activeLineIndex = 0;
+
+                // Interaction state
+                this.hoveredPoint = null; // {lineIndex, pointIndex}
+                this.draggingPoint = null; // {lineIndex, pointIndex}
+                this.isDragging = false;
+
+                // Bind event handlers
+                this.handleMouseMove = this.handleMouseMove.bind(this);
+                this.handleMouseDown = this.handleMouseDown.bind(this);
+                this.handleMouseUp = this.handleMouseUp.bind(this);
+                this.handleMouseLeave = this.handleMouseLeave.bind(this);
+
+                // Attach events
+                canvas.addEventListener('mousemove', this.handleMouseMove);
+                canvas.addEventListener('mousedown', this.handleMouseDown);
+                canvas.addEventListener('mouseup', this.handleMouseUp);
+                canvas.addEventListener('mouseleave', this.handleMouseLeave);
+            }
+
+            setConfig(config) {
+                if (config.lines) {
+                    this.lines = config.lines.map(line =>
+                        line ? line.map(p => ({x: p[0], y: p[1]})) : []
+                    );
+                }
+                if (config.xRange) this.xRange = config.xRange;
+                if (config.yRange) this.yRange = config.yRange;
+                if (config.colors) this.colors = config.colors;
+                if (config.gridSnap) this.gridSnap = config.gridSnap;
+                if (config.width) this.canvas.width = config.width;
+                if (config.height) this.canvas.height = config.height;
+
+                // Update UI elements
+                document.getElementById('chartTitle').textContent = config.title || '';
+                document.getElementById('xLabel').textContent = config.xLabel || '';
+                document.getElementById('yLabel').textContent = config.yLabel || '';
+
+                document.getElementById('xMin').value = this.xRange[0];
+                document.getElementById('xMax').value = this.xRange[1];
+                document.getElementById('yMin').value = this.yRange[0];
+                document.getElementById('yMax').value = this.yRange[1];
+
+                this.updateLineSelector();
+                this.draw();
+            }
+
+            updateLineSelector() {
+                const selector = document.getElementById('lineSelector');
+                selector.innerHTML = '';
+
+                this.lines.forEach((line, i) => {
+                    const btn = document.createElement('button');
+                    btn.className = 'line-btn' + (i === this.activeLineIndex ? ' active' : '');
+                    btn.textContent = `Line ${i + 1}`;
+                    btn.style.borderColor = this.colors[i % this.colors.length];
+                    if (i === this.activeLineIndex) {
+                        btn.style.backgroundColor = this.colors[i % this.colors.length];
+                    } else {
+                        btn.style.color = this.colors[i % this.colors.length];
+                    }
+                    btn.onclick = () => {
+                        this.activeLineIndex = i;
+                        this.updateLineSelector();
+                        this.draw();
+                    };
+                    selector.appendChild(btn);
+                });
+
+                // Add "+" button for new line (max 5 lines)
+                if (this.lines.length < 5) {
+                    const addBtn = document.createElement('button');
+                    addBtn.className = 'add-line-btn';
+                    addBtn.textContent = '+ Add Line';
+                    addBtn.onclick = () => {
+                        this.lines.push([]);
+                        this.activeLineIndex = this.lines.length - 1;
+                        this.updateLineSelector();
+                        this.draw();
+                        this.notifyChange();
+                    };
+                    selector.appendChild(addBtn);
+                }
+            }
+
+            // Coordinate conversion
+            dataToCanvas(x, y) {
+                const chartWidth = this.canvas.width - this.padding.left - this.padding.right;
+                const chartHeight = this.canvas.height - this.padding.top - this.padding.bottom;
+
+                const canvasX = this.padding.left +
+                    ((x - this.xRange[0]) / (this.xRange[1] - this.xRange[0])) * chartWidth;
+                const canvasY = this.padding.top +
+                    (1 - (y - this.yRange[0]) / (this.yRange[1] - this.yRange[0])) * chartHeight;
+
+                return {x: canvasX, y: canvasY};
+            }
+
+            canvasToData(canvasX, canvasY) {
+                const chartWidth = this.canvas.width - this.padding.left - this.padding.right;
+                const chartHeight = this.canvas.height - this.padding.top - this.padding.bottom;
+
+                let x = this.xRange[0] +
+                    ((canvasX - this.padding.left) / chartWidth) * (this.xRange[1] - this.xRange[0]);
+                let y = this.yRange[0] +
+                    (1 - (canvasY - this.padding.top) / chartHeight) * (this.yRange[1] - this.yRange[0]);
+
+                // Apply grid snapping
+                if (this.gridSnap) {
+                    const xStep = (this.xRange[1] - this.xRange[0]) * this.gridSnap[0] / 100;
+                    const yStep = (this.yRange[1] - this.yRange[0]) * this.gridSnap[1] / 100;
+                    x = Math.round(x / xStep) * xStep;
+                    y = Math.round(y / yStep) * yStep;
+                }
+
+                // Clamp to range
+                x = Math.max(this.xRange[0], Math.min(this.xRange[1], x));
+                y = Math.max(this.yRange[0], Math.min(this.yRange[1], y));
+
+                return {x, y};
+            }
+
+            findPointAt(canvasX, canvasY) {
+                for (let lineIndex = 0; lineIndex < this.lines.length; lineIndex++) {
+                    const line = this.lines[lineIndex];
+                    for (let pointIndex = 0; pointIndex < line.length; pointIndex++) {
+                        const point = line[pointIndex];
+                        const canvasPoint = this.dataToCanvas(point.x, point.y);
+                        const dist = Math.sqrt(
+                            Math.pow(canvasX - canvasPoint.x, 2) +
+                            Math.pow(canvasY - canvasPoint.y, 2)
+                        );
+                        if (dist <= this.hoverRadius) {
+                            return {lineIndex, pointIndex};
+                        }
+                    }
+                }
+                return null;
+            }
+
+            isInChartArea(canvasX, canvasY) {
+                return canvasX >= this.padding.left &&
+                       canvasX <= this.canvas.width - this.padding.right &&
+                       canvasY >= this.padding.top &&
+                       canvasY <= this.canvas.height - this.padding.bottom;
+            }
+
+            handleMouseMove(e) {
+                const rect = this.canvas.getBoundingClientRect();
+                const canvasX = e.clientX - rect.left;
+                const canvasY = e.clientY - rect.top;
+
+                if (this.isDragging && this.draggingPoint) {
+                    // Update point position
+                    const dataPos = this.canvasToData(canvasX, canvasY);
+                    const line = this.lines[this.draggingPoint.lineIndex];
+                    line[this.draggingPoint.pointIndex] = dataPos;
+
+                    // Re-sort line by X
+                    const pointData = line[this.draggingPoint.pointIndex];
+                    line.sort((a, b) => a.x - b.x);
+                    // Update point index after sort
+                    this.draggingPoint.pointIndex = line.indexOf(pointData);
+
+                    this.draw();
+                    this.showTooltip(canvasX, canvasY, dataPos);
+                } else {
+                    // Check for hover
+                    const point = this.findPointAt(canvasX, canvasY);
+                    if (point) {
+                        this.hoveredPoint = point;
+                        this.canvas.style.cursor = 'pointer';
+                        const p = this.lines[point.lineIndex][point.pointIndex];
+                        this.showTooltip(canvasX, canvasY, p);
+                    } else if (this.isInChartArea(canvasX, canvasY)) {
+                        this.hoveredPoint = null;
+                        this.canvas.style.cursor = 'crosshair';
+                        this.hideTooltip();
+                    } else {
+                        this.hoveredPoint = null;
+                        this.canvas.style.cursor = 'default';
+                        this.hideTooltip();
+                    }
+                    this.draw();
+                }
+            }
+
+            handleMouseDown(e) {
+                const rect = this.canvas.getBoundingClientRect();
+                const canvasX = e.clientX - rect.left;
+                const canvasY = e.clientY - rect.top;
+
+                const point = this.findPointAt(canvasX, canvasY);
+
+                if (point) {
+                    // Start dragging or prepare for removal
+                    this.draggingPoint = point;
+                    this.dragStartTime = Date.now();
+                    this.dragStartX = canvasX;
+                    this.dragStartY = canvasY;
+                    // Switch to this line
+                    this.activeLineIndex = point.lineIndex;
+                    this.updateLineSelector();
+                } else if (this.isInChartArea(canvasX, canvasY)) {
+                    // Add new point to active line
+                    const dataPos = this.canvasToData(canvasX, canvasY);
+                    if (!this.lines[this.activeLineIndex]) {
+                        this.lines[this.activeLineIndex] = [];
+                    }
+                    this.lines[this.activeLineIndex].push(dataPos);
+                    // Sort by X
+                    this.lines[this.activeLineIndex].sort((a, b) => a.x - b.x);
+                    this.draw();
+                    this.notifyChange();
+                }
+            }
+
+            handleMouseUp(e) {
+                if (this.draggingPoint) {
+                    const rect = this.canvas.getBoundingClientRect();
+                    const canvasX = e.clientX - rect.left;
+                    const canvasY = e.clientY - rect.top;
+
+                    const elapsed = Date.now() - this.dragStartTime;
+                    const moved = Math.sqrt(
+                        Math.pow(canvasX - this.dragStartX, 2) +
+                        Math.pow(canvasY - this.dragStartY, 2)
+                    );
+
+                    if (elapsed < 200 && moved < 5) {
+                        // This was a click, remove the point
+                        this.lines[this.draggingPoint.lineIndex].splice(
+                            this.draggingPoint.pointIndex, 1
+                        );
+                    }
+
+                    this.isDragging = false;
+                    this.draggingPoint = null;
+                    this.draw();
+                    this.notifyChange();
+                }
+            }
+
+            handleMouseLeave() {
+                if (this.isDragging && this.draggingPoint) {
+                    this.notifyChange();
+                }
+                this.isDragging = false;
+                this.draggingPoint = null;
+                this.hoveredPoint = null;
+                this.hideTooltip();
+                this.draw();
+            }
+
+            showTooltip(x, y, dataPoint) {
+                const tooltip = document.getElementById('tooltip');
+                tooltip.textContent = `(${dataPoint.x.toFixed(2)}, ${dataPoint.y.toFixed(2)})`;
+                tooltip.style.left = (x + 15) + 'px';
+                tooltip.style.top = (y - 10) + 'px';
+                tooltip.style.display = 'block';
+            }
+
+            hideTooltip() {
+                document.getElementById('tooltip').style.display = 'none';
+            }
+
+            notifyChange() {
+                // Convert to format expected by Python
+                const data = this.lines.map(line =>
+                    line.map(p => [p.x, p.y])
+                );
+                setComponentValue(data);
+            }
+
+            updateRange(axis, minOrMax, value) {
+                const val = parseFloat(value);
+                if (isNaN(val)) return;
+
+                if (axis === 'x') {
+                    if (minOrMax === 'min') this.xRange[0] = val;
+                    else this.xRange[1] = val;
+                } else {
+                    if (minOrMax === 'min') this.yRange[0] = val;
+                    else this.yRange[1] = val;
+                }
+
+                this.draw();
+            }
+
+            draw() {
+                const ctx = this.ctx;
+                const width = this.canvas.width;
+                const height = this.canvas.height;
+
+                // Clear canvas
+                ctx.fillStyle = '#fafafa';
+                ctx.fillRect(0, 0, width, height);
+
+                // Draw grid
+                this.drawGrid();
+
+                // Draw axes
+                this.drawAxes();
+
+                // Draw lines and points
+                this.lines.forEach((line, lineIndex) => {
+                    if (line.length === 0) return;
+
+                    const color = this.colors[lineIndex % this.colors.length];
+
+                    // Draw line segments
+                    if (line.length >= 2) {
+                        ctx.beginPath();
+                        ctx.strokeStyle = color;
+                        ctx.lineWidth = this.lineWidth;
+
+                        const firstPoint = this.dataToCanvas(line[0].x, line[0].y);
+                        ctx.moveTo(firstPoint.x, firstPoint.y);
+
+                        for (let i = 1; i < line.length; i++) {
+                            const point = this.dataToCanvas(line[i].x, line[i].y);
+                            ctx.lineTo(point.x, point.y);
+                        }
+                        ctx.stroke();
+                    }
+
+                    // Draw points
+                    line.forEach((point, pointIndex) => {
+                        const canvasPoint = this.dataToCanvas(point.x, point.y);
+                        const isHovered = this.hoveredPoint &&
+                            this.hoveredPoint.lineIndex === lineIndex &&
+                            this.hoveredPoint.pointIndex === pointIndex;
+                        const isDragging = this.draggingPoint &&
+                            this.draggingPoint.lineIndex === lineIndex &&
+                            this.draggingPoint.pointIndex === pointIndex;
+
+                        // Draw outer ring for hover/drag
+                        if (isHovered || isDragging) {
+                            ctx.beginPath();
+                            ctx.arc(canvasPoint.x, canvasPoint.y, this.dotRadius + 4, 0, Math.PI * 2);
+                            ctx.fillStyle = color + '40'; // 25% opacity
+                            ctx.fill();
+                        }
+
+                        // Draw point
+                        ctx.beginPath();
+                        ctx.arc(canvasPoint.x, canvasPoint.y, this.dotRadius, 0, Math.PI * 2);
+                        ctx.fillStyle = color;
+                        ctx.fill();
+                        ctx.strokeStyle = '#fff';
+                        ctx.lineWidth = 2;
+                        ctx.stroke();
+                    });
+                });
+            }
+
+            drawGrid() {
+                const ctx = this.ctx;
+                const chartWidth = this.canvas.width - this.padding.left - this.padding.right;
+                const chartHeight = this.canvas.height - this.padding.top - this.padding.bottom;
+
+                ctx.strokeStyle = '#e0e0e0';
+                ctx.lineWidth = 1;
+
+                // Vertical grid lines (X axis divisions)
+                const xDivisions = 10;
+                for (let i = 0; i <= xDivisions; i++) {
+                    const x = this.padding.left + (i / xDivisions) * chartWidth;
+                    ctx.beginPath();
+                    ctx.moveTo(x, this.padding.top);
+                    ctx.lineTo(x, this.padding.top + chartHeight);
+                    ctx.stroke();
+                }
+
+                // Horizontal grid lines (Y axis divisions)
+                const yDivisions = 10;
+                for (let i = 0; i <= yDivisions; i++) {
+                    const y = this.padding.top + (i / yDivisions) * chartHeight;
+                    ctx.beginPath();
+                    ctx.moveTo(this.padding.left, y);
+                    ctx.lineTo(this.padding.left + chartWidth, y);
+                    ctx.stroke();
+                }
+            }
+
+            drawAxes() {
+                const ctx = this.ctx;
+                const chartWidth = this.canvas.width - this.padding.left - this.padding.right;
+                const chartHeight = this.canvas.height - this.padding.top - this.padding.bottom;
+
+                ctx.fillStyle = '#666';
+                ctx.font = '11px -apple-system, BlinkMacSystemFont, sans-serif';
+
+                // X axis labels
+                const xDivisions = 5;
+                for (let i = 0; i <= xDivisions; i++) {
+                    const x = this.padding.left + (i / xDivisions) * chartWidth;
+                    const value = this.xRange[0] + (i / xDivisions) * (this.xRange[1] - this.xRange[0]);
+                    ctx.textAlign = 'center';
+                    ctx.fillText(value.toFixed(0), x, this.canvas.height - this.padding.bottom + 15);
+                }
+
+                // Y axis labels
+                const yDivisions = 5;
+                for (let i = 0; i <= yDivisions; i++) {
+                    const y = this.padding.top + (i / yDivisions) * chartHeight;
+                    const value = this.yRange[1] - (i / yDivisions) * (this.yRange[1] - this.yRange[0]);
+                    ctx.textAlign = 'right';
+                    ctx.fillText(value.toFixed(0), this.padding.left - 5, y + 4);
+                }
+            }
+        }
+
+        // Initialize
+        let editor = null;
+
+        function init() {
+            const canvas = document.getElementById('chartCanvas');
+            editor = new ChartEditor(canvas);
+
+            // Handle range input changes
+            document.getElementById('xMin').addEventListener('change', (e) => {
+                editor.updateRange('x', 'min', e.target.value);
+            });
+            document.getElementById('xMax').addEventListener('change', (e) => {
+                editor.updateRange('x', 'max', e.target.value);
+            });
+            document.getElementById('yMin').addEventListener('change', (e) => {
+                editor.updateRange('y', 'min', e.target.value);
+            });
+            document.getElementById('yMax').addEventListener('change', (e) => {
+                editor.updateRange('y', 'max', e.target.value);
+            });
+
+            // Listen for messages from Streamlit
+            window.addEventListener('message', (event) => {
+                if (event.data.type === 'streamlit:render') {
+                    const args = event.data.args;
+                    editor.setConfig({
+                        lines: args.lines || [],
+                        xRange: args.xRange || [0, 100],
+                        yRange: args.yRange || [0, 1000],
+                        colors: args.colors || ["#FF6B6B", "#4ECDC4", "#45B7D1"],
+                        gridSnap: args.gridSnap || null,
+                        title: args.title || '',
+                        xLabel: args.xLabel || '',
+                        yLabel: args.yLabel || '',
+                        width: args.width || 700,
+                        height: args.height || 450
+                    });
+
+                    // Set frame height
+                    setTimeout(() => {
+                        setFrameHeight(document.body.scrollHeight);
+                    }, 100);
+                }
+            });
+
+            setComponentReady();
+        }
+
+        // Track if we're dragging to distinguish from click
+        document.getElementById('chartCanvas').addEventListener('mousemove', function(e) {
+            if (editor && editor.draggingPoint && !editor.isDragging) {
+                const rect = this.getBoundingClientRect();
+                const canvasX = e.clientX - rect.left;
+                const canvasY = e.clientY - rect.top;
+                const moved = Math.sqrt(
+                    Math.pow(canvasX - editor.dragStartX, 2) +
+                    Math.pow(canvasY - editor.dragStartY, 2)
+                );
+                if (moved > 5) {
+                    editor.isDragging = true;
+                }
+            }
+        });
+
+        // Start when DOM is ready
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', init);
+        } else {
+            init();
+        }
+    </script>
+</body>
+</html>
