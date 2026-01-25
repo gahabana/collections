@@ -49,8 +49,8 @@ y_label = st.sidebar.text_input("Y-Axis Label", value="Value")
 st.sidebar.subheader("Lines")
 num_lines = st.sidebar.selectbox("Number of Lines", options=[1, 2, 3], index=1)
 
-# Line colors
-default_colors = ["#FF6B6B", "#4ECDC4", "#45B7D1"]
+# Line colors (distinct: coral red, teal, purple)
+default_colors = ["#FF6B6B", "#4ECDC4", "#A55EEA"]
 colors = []
 for i in range(num_lines):
     color = st.sidebar.color_picker(f"Line {i+1} Color", value=default_colors[i])

@@ -925,35 +925,37 @@
             // Find all points that overlap with points from other lines
             findOverlappingPoints() {
                 const overlaps = new Map(); // key: "x,y" -> array of {lineIndex, pointIndex}
-                const tolerance = (this.xRange[1] - this.xRange[0]) * 0.01;
-                const yTolerance = (this.yRange[1] - this.yRange[0]) * 0.01;
+
+                // Grid cell size for grouping (1% of range)
+                const xCell = (this.xRange[1] - this.xRange[0]) * 0.01;
+                const yCell = (this.yRange[1] - this.yRange[0]) * 0.01;
+
+                // Group all points by grid cell
+                const grid = new Map();
 
                 this.lines.forEach((line, lineIndex) => {
                     line.forEach((point, pointIndex) => {
-                        // Check against all other lines
-                        this.lines.forEach((otherLine, otherLineIndex) => {
-                            if (otherLineIndex <= lineIndex) return; // Skip same and already-checked lines
+                        // Round to grid cell
+                        const cellX = Math.round(point.x / xCell);
+                        const cellY = Math.round(point.y / yCell);
+                        const key = `${cellX},${cellY}`;
 
-                            otherLine.forEach((otherPoint, otherPointIndex) => {
-                                if (Math.abs(point.x - otherPoint.x) < tolerance &&
-                                    Math.abs(point.y - otherPoint.y) < yTolerance) {
-                                    // Found an overlap
-                                    const key = `${Math.round(point.x * 100)},${Math.round(point.y * 100)}`;
-                                    if (!overlaps.has(key)) {
-                                        overlaps.set(key, [{lineIndex, pointIndex}]);
-                                    }
-                                    const arr = overlaps.get(key);
-                                    // Add both points if not already added
-                                    if (!arr.some(p => p.lineIndex === lineIndex && p.pointIndex === pointIndex)) {
-                                        arr.push({lineIndex, pointIndex});
-                                    }
-                                    if (!arr.some(p => p.lineIndex === otherLineIndex && p.pointIndex === otherPointIndex)) {
-                                        arr.push({lineIndex: otherLineIndex, pointIndex: otherPointIndex});
-                                    }
-                                }
-                            });
-                        });
+                        if (!grid.has(key)) {
+                            grid.set(key, []);
+                        }
+                        grid.get(key).push({lineIndex, pointIndex, x: point.x, y: point.y});
                     });
+                });
+
+                // Find cells with points from multiple different lines
+                grid.forEach((points, key) => {
+                    // Get unique line indices at this location
+                    const uniqueLines = new Set(points.map(p => p.lineIndex));
+
+                    if (uniqueLines.size > 1) {
+                        // Multiple lines share this location
+                        overlaps.set(key, points);
+                    }
                 });
 
                 return overlaps;
@@ -1058,9 +1060,13 @@
 
                 // Draw overlap badges (count indicator) - only once per overlap location
                 overlaps.forEach((points, key) => {
-                    if (points.length > 1) {
+                    // Count unique lines at this location
+                    const uniqueLines = new Set(points.map(p => p.lineIndex));
+                    const lineCount = uniqueLines.size;
+
+                    if (lineCount > 1) {
                         // Use the first point's position for the badge
-                        const firstPt = this.lines[points[0].lineIndex][points[0].pointIndex];
+                        const firstPt = points[0];
                         const canvasPoint = this.dataToCanvas(firstPt.x, firstPt.y);
 
                         // Draw badge
@@ -1076,7 +1082,7 @@
                         ctx.font = 'bold 10px sans-serif';
                         ctx.textAlign = 'center';
                         ctx.textBaseline = 'middle';
-                        ctx.fillText(points.length.toString(), badgeX, badgeY);
+                        ctx.fillText(lineCount.toString(), badgeX, badgeY);
                     }
                 });
             }
