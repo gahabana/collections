@@ -296,6 +296,7 @@
         let debugLogVisible = false;
 
         function toggleDebugLog() {
+            console.log('[DEBUG_TOGGLE] Button clicked, current state:', debugLogVisible);
             debugLogVisible = !debugLogVisible;
             const logEl = document.getElementById('debugLog');
             const toggleBtn = document.getElementById('debugToggle');
@@ -304,11 +305,18 @@
                 logEl.style.display = 'block';
                 toggleBtn.textContent = 'Hide Debug Log';
                 toggleBtn.classList.add('active');
+                console.log('[DEBUG_TOGGLE] Log is now VISIBLE');
             } else {
                 logEl.style.display = 'none';
                 toggleBtn.textContent = 'Show Debug Log';
                 toggleBtn.classList.remove('active');
+                console.log('[DEBUG_TOGGLE] Log is now HIDDEN');
             }
+
+            // Update iframe height to accommodate the log
+            setTimeout(() => {
+                setFrameHeight(document.body.scrollHeight);
+            }, 50);
         }
 
         // ============================================
@@ -1057,6 +1065,17 @@
 
             const canvas = document.getElementById('chartCanvas');
             editor = new ChartEditor(canvas);
+
+            // Backup event listener for debug toggle (in case onclick doesn't work in iframe)
+            const debugBtn = document.getElementById('debugToggle');
+            if (debugBtn) {
+                debugBtn.addEventListener('click', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    toggleDebugLog();
+                });
+                console.log('[INIT] Debug toggle event listener attached');
+            }
 
             // Handle range input changes
             document.getElementById('xMin').addEventListener('change', (e) => {
