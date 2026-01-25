@@ -632,6 +632,9 @@
                     this.activeLineIndex = point.lineIndex;
 
                     const p = this.lines[point.lineIndex][point.pointIndex];
+                    // Save original position for potential revert on cancelled drag
+                    this.dragOriginalPos = {x: p.x, y: p.y};
+
                     DebugLog.log('MOUSEDOWN_ON_POINT', {
                         line: point.lineIndex + 1,
                         pointIndex: point.pointIndex,
@@ -700,18 +703,29 @@
 
                     this.isDragging = false;
                     this.draggingPoint = null;
+                    this.dragOriginalPos = null;
                     this.updateLineSelector();
                     this.draw();
                 }
             }
 
             handleMouseLeave() {
-                if (this.isDragging && this.draggingPoint) {
-                    DebugLog.log('DRAG_CANCELLED', 'Mouse left canvas during drag');
-                    this.notifyChange('drag ended (mouse left)');
+                if (this.isDragging && this.draggingPoint && this.dragOriginalPos) {
+                    // REVERT to original position - don't save edge-clamped position
+                    const line = this.lines[this.draggingPoint.lineIndex];
+                    line[this.draggingPoint.pointIndex] = {...this.dragOriginalPos};
+                    // Re-sort by X (in case it moved)
+                    line.sort((a, b) => a.x - b.x);
+
+                    DebugLog.log('DRAG_REVERTED', {
+                        reason: 'Mouse left canvas',
+                        restoredTo: {x: this.dragOriginalPos.x.toFixed(2), y: this.dragOriginalPos.y.toFixed(2)}
+                    }, 'warn');
+                    // Don't notify Python - we reverted to original state
                 }
                 this.isDragging = false;
                 this.draggingPoint = null;
+                this.dragOriginalPos = null;
                 this.hoveredPoint = null;
                 this.hideTooltip();
                 this.draw();
