@@ -577,6 +577,24 @@
                 return {x, y};
             }
 
+            // Check if X coordinate would conflict with existing point in a line
+            // excludeIndex: point index to exclude (for drag operations)
+            hasConflictingX(lineIndex, x, excludeIndex = -1) {
+                const line = this.lines[lineIndex];
+                if (!line) return false;
+
+                // Tolerance: points within 1% of X range are considered "same X"
+                const tolerance = (this.xRange[1] - this.xRange[0]) * 0.01;
+
+                for (let i = 0; i < line.length; i++) {
+                    if (i === excludeIndex) continue;
+                    if (Math.abs(line[i].x - x) < tolerance) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
             findPointAt(canvasX, canvasY) {
                 for (let lineIndex = 0; lineIndex < this.lines.length; lineIndex++) {
                     const line = this.lines[lineIndex];
@@ -697,6 +715,15 @@
                         this.lines.push([]);
                     }
 
+                    // Check for X conflict before adding
+                    if (this.hasConflictingX(this.activeLineIndex, dataPos.x)) {
+                        DebugLog.log('ADD_BLOCKED', {
+                            reason: 'X coordinate too close to existing point',
+                            coords: {x: dataPos.x.toFixed(2), y: dataPos.y.toFixed(2)}
+                        }, 'warn');
+                        return; // Don't add the point
+                    }
+
                     this.lines[this.activeLineIndex].push(dataPos);
                     // Sort by X
                     this.lines[this.activeLineIndex].sort((a, b) => a.x - b.x);
@@ -738,13 +765,31 @@
 
                         this.notifyChange('removed point');
                     } else if (this.isDragging) {
-                        // Was a drag operation
-                        const p = this.lines[this.draggingPoint.lineIndex][this.draggingPoint.pointIndex];
-                        DebugLog.log('DRAG_END', {
-                            line: this.draggingPoint.lineIndex + 1,
-                            newCoords: {x: p.x.toFixed(2), y: p.y.toFixed(2)}
-                        });
-                        this.notifyChange('dragged point');
+                        // Was a drag operation - check for X conflict
+                        const line = this.lines[this.draggingPoint.lineIndex];
+                        const currentPoint = line[this.draggingPoint.pointIndex];
+
+                        // Find the point's current index after sorting
+                        const currentIndex = line.findIndex(p => p === currentPoint);
+
+                        if (this.hasConflictingX(this.draggingPoint.lineIndex, currentPoint.x, currentIndex)) {
+                            // X conflict! Revert to original position
+                            line[currentIndex] = {...this.dragOriginalPos};
+                            line.sort((a, b) => a.x - b.x);
+
+                            DebugLog.log('DRAG_REVERTED', {
+                                reason: 'X coordinate too close to existing point',
+                                restoredTo: {x: this.dragOriginalPos.x.toFixed(2), y: this.dragOriginalPos.y.toFixed(2)}
+                            }, 'warn');
+                            // Don't notify Python - we reverted
+                        } else {
+                            // Valid drag
+                            DebugLog.log('DRAG_END', {
+                                line: this.draggingPoint.lineIndex + 1,
+                                newCoords: {x: currentPoint.x.toFixed(2), y: currentPoint.y.toFixed(2)}
+                            });
+                            this.notifyChange('dragged point');
+                        }
                     }
 
                     this.isDragging = false;
