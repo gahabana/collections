@@ -51,10 +51,37 @@
         }
 
         #chartCanvas {
-            border: 1px solid #ddd;
+            border: 2px solid #ddd;
             border-radius: 4px;
             cursor: crosshair;
             background: #fafafa;
+            transition: border-color 0.1s ease;
+        }
+
+        #chartCanvas.error-flash {
+            border-color: #FF6B6B;
+            box-shadow: 0 0 10px rgba(255, 107, 107, 0.5);
+        }
+
+        .error-message {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(255, 107, 107, 0.95);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 500;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s ease;
+            z-index: 200;
+        }
+
+        .error-message.visible {
+            opacity: 1;
         }
 
         .x-label {
@@ -229,8 +256,9 @@
         <div class="chart-title" id="chartTitle"></div>
         <div class="chart-wrapper">
             <div class="y-label" id="yLabel"></div>
-            <div class="chart-area">
+            <div class="chart-area" style="position: relative;">
                 <canvas id="chartCanvas"></canvas>
+                <div class="error-message" id="errorMessage">Cannot add point - X too close to existing point</div>
                 <div class="x-label" id="xLabel"></div>
             </div>
         </div>
@@ -726,6 +754,7 @@
                             reason: 'X coordinate too close to existing point',
                             coords: {x: dataPos.x.toFixed(2), y: dataPos.y.toFixed(2)}
                         }, 'warn');
+                        this.showErrorFlash('Cannot add - X too close to existing point');
                         return; // Don't add the point
                     }
 
@@ -786,6 +815,7 @@
                                 reason: 'X coordinate too close to existing point',
                                 restoredTo: {x: this.dragOriginalPos.x.toFixed(2), y: this.dragOriginalPos.y.toFixed(2)}
                             }, 'warn');
+                            this.showErrorFlash('Cannot move - X too close to existing point');
                             // Don't notify Python - we reverted
                         } else {
                             // Valid drag
@@ -837,6 +867,22 @@
 
             hideTooltip() {
                 document.getElementById('tooltip').style.display = 'none';
+            }
+
+            showErrorFlash(message) {
+                // Flash the canvas border
+                this.canvas.classList.add('error-flash');
+
+                // Show error message
+                const errorEl = document.getElementById('errorMessage');
+                if (message) errorEl.textContent = message;
+                errorEl.classList.add('visible');
+
+                // Remove after brief delay
+                setTimeout(() => {
+                    this.canvas.classList.remove('error-flash');
+                    errorEl.classList.remove('visible');
+                }, 800);
             }
 
             notifyChange(reason) {
