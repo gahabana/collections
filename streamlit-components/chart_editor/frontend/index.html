@@ -68,6 +68,11 @@
             box-shadow: 0 0 10px rgba(255, 107, 107, 0.5);
         }
 
+        #chartCanvas.disabled {
+            opacity: 0.7;
+            cursor: not-allowed !important;
+        }
+
         .error-message {
             position: absolute;
             top: 50%;
@@ -472,6 +477,11 @@
                 this.gridSnap = null;
                 this.activeLineIndex = 0;
 
+                // Constraints
+                this.disabled = false;
+                this.minPoints = 0;
+                this.maxPoints = null;
+
                 // Interaction state
                 this.hoveredPoint = null;
                 this.draggingPoint = null;
@@ -517,6 +527,19 @@
                 if (config.gridSnap) this.gridSnap = config.gridSnap;
                 if (config.width) this.canvas.width = config.width;
                 if (config.height) this.canvas.height = config.height;
+
+                // Constraints
+                this.disabled = config.disabled || false;
+                this.minPoints = config.minPoints || 0;
+                this.maxPoints = config.maxPoints || null;
+
+                // Update visual state for disabled
+                if (this.disabled) {
+                    this.canvas.style.cursor = 'default';
+                    this.canvas.classList.add('disabled');
+                } else {
+                    this.canvas.classList.remove('disabled');
+                }
 
                 // Update UI elements
                 document.getElementById('chartTitle').textContent = config.title || '';
@@ -752,6 +775,12 @@
             }
 
             handleMouseDown(e) {
+                // Block all interactions if disabled
+                if (this.disabled) {
+                    DebugLog.log('INTERACTION_BLOCKED', 'Chart is disabled', 'warn');
+                    return;
+                }
+
                 const rect = this.canvas.getBoundingClientRect();
                 const canvasX = e.clientX - rect.left;
                 const canvasY = e.clientY - rect.top;
@@ -791,6 +820,18 @@
                         return;
                     }
 
+                    // Check max points constraint
+                    const currentLine = this.lines[this.activeLineIndex] || [];
+                    if (this.maxPoints !== null && currentLine.length >= this.maxPoints) {
+                        DebugLog.log('ADD_BLOCKED', {
+                            reason: 'Maximum points reached',
+                            maxPoints: this.maxPoints,
+                            currentPoints: currentLine.length
+                        }, 'warn');
+                        this.showErrorFlash(`Cannot add - Maximum ${this.maxPoints} points per line`);
+                        return;
+                    }
+
                     this.enterEditMode();
                     this.lines[this.activeLineIndex].push(dataPos);
                     this.lines[this.activeLineIndex].sort((a, b) => a.x - b.x);
@@ -819,15 +860,26 @@
                     );
 
                     if (elapsed < 300 && moved < 5) {
-                        this.enterEditMode();
-                        const removedPoint = this.lines[this.draggingPoint.lineIndex][this.draggingPoint.pointIndex];
-                        this.lines[this.draggingPoint.lineIndex].splice(this.draggingPoint.pointIndex, 1);
+                        // Check min points constraint before removing
+                        const currentLine = this.lines[this.draggingPoint.lineIndex];
+                        if (this.minPoints > 0 && currentLine.length <= this.minPoints) {
+                            DebugLog.log('REMOVE_BLOCKED', {
+                                reason: 'Minimum points required',
+                                minPoints: this.minPoints,
+                                currentPoints: currentLine.length
+                            }, 'warn');
+                            this.showErrorFlash(`Cannot remove - Minimum ${this.minPoints} points required`);
+                        } else {
+                            this.enterEditMode();
+                            const removedPoint = this.lines[this.draggingPoint.lineIndex][this.draggingPoint.pointIndex];
+                            this.lines[this.draggingPoint.lineIndex].splice(this.draggingPoint.pointIndex, 1);
 
-                        DebugLog.log('POINT_REMOVED', {
-                            line: this.draggingPoint.lineIndex + 1,
-                            coords: {x: removedPoint.x.toFixed(2), y: removedPoint.y.toFixed(2)},
-                            remaining: this.lines[this.draggingPoint.lineIndex].length
-                        });
+                            DebugLog.log('POINT_REMOVED', {
+                                line: this.draggingPoint.lineIndex + 1,
+                                coords: {x: removedPoint.x.toFixed(2), y: removedPoint.y.toFixed(2)},
+                                remaining: this.lines[this.draggingPoint.lineIndex].length
+                            });
+                        }
                     } else if (this.isDragging) {
                         const line = this.lines[this.draggingPoint.lineIndex];
                         const currentPoint = line[this.draggingPoint.pointIndex];
