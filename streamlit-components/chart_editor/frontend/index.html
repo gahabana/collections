@@ -157,6 +157,28 @@
             text-align: center;
         }
 
+        /* Debug toggle button */
+        .debug-toggle {
+            margin-top: 10px;
+            padding: 4px 10px;
+            font-size: 11px;
+            color: #666;
+            background: #f0f0f0;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        .debug-toggle:hover {
+            background: #e0e0e0;
+        }
+
+        .debug-toggle.active {
+            background: #4ECDC4;
+            color: white;
+            border-color: #4ECDC4;
+        }
+
         /* Debug log styles */
         .debug-log {
             margin-top: 15px;
@@ -234,11 +256,33 @@
         <div class="instructions">
             Click to add point | Click point to remove | Drag point to move
         </div>
-        <div class="debug-log" id="debugLog"></div>
+        <button class="debug-toggle" id="debugToggle" onclick="toggleDebugLog()">Show Debug Log</button>
+        <div class="debug-log" id="debugLog" style="display: none;"></div>
     </div>
     <div class="tooltip" id="tooltip" style="display: none;"></div>
 
     <script>
+        // ============================================
+        // DEBUG LOG TOGGLE
+        // ============================================
+        let debugLogVisible = false;
+
+        function toggleDebugLog() {
+            debugLogVisible = !debugLogVisible;
+            const logEl = document.getElementById('debugLog');
+            const toggleBtn = document.getElementById('debugToggle');
+
+            if (debugLogVisible) {
+                logEl.style.display = 'block';
+                toggleBtn.textContent = 'Hide Debug Log';
+                toggleBtn.classList.add('active');
+            } else {
+                logEl.style.display = 'none';
+                toggleBtn.textContent = 'Show Debug Log';
+                toggleBtn.classList.remove('active');
+            }
+        }
+
         // ============================================
         // DEBUG LOGGING SYSTEM
         // ============================================
@@ -417,7 +461,9 @@
 
                     if (matchIndex !== -1) {
                         // Python is echoing back something we sent - ignore it
-                        DebugLog.log('IGNORED_ECHO', `Matched sent data at index ${matchIndex}, keeping current state`, 'warn');
+                        // BUT remove this entry so future identical data (like reset) won't match
+                        this.recentlySentData.splice(matchIndex, 1);
+                        DebugLog.log('IGNORED_ECHO', `Matched sent data at index ${matchIndex}, removed from buffer (${this.recentlySentData.length} remaining)`, 'warn');
                     } else {
                         // Python sent truly NEW data (e.g., user clicked a preset button)
                         DebugLog.log('EXTERNAL_UPDATE', 'Python sent new data, applying it', 'info');
