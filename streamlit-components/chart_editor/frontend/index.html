@@ -358,9 +358,11 @@
                 this.gridSnap = null;
                 this.activeLineIndex = 0;
 
-                // STATE SYNC: Track what we last sent to Python
-                // This prevents Python's stale data from overwriting our changes
-                this.lastSentData = null;
+                // STATE SYNC: Track recently sent values to Python
+                // This prevents stale Streamlit reruns from overwriting our changes
+                // We keep multiple values because rapid changes can cause out-of-order responses
+                this.recentlySentData = [];  // Array of JSON strings
+                this.maxRecentSent = 10;     // Keep last N sent values
                 this.isFirstRender = true;
 
                 // Interaction state
@@ -404,19 +406,24 @@
                 if (this.isFirstRender) {
                     DebugLog.log('FIRST_RENDER', 'Applying initial data from Python', 'info');
                     this.lines = incomingLines;
-                    this.lastSentData = JSON.stringify(incomingAsArray);
+                    this.recentlySentData = [JSON.stringify(incomingAsArray)];
                     this.isFirstRender = false;
                 } else {
                     const incomingStr = JSON.stringify(incomingAsArray);
 
-                    if (this.lastSentData === incomingStr) {
-                        // Python is echoing back what we sent - ignore to keep our current state
-                        DebugLog.log('IGNORED_ECHO', 'Python echoed our data back, keeping current state', 'warn');
+                    // Check if incoming data matches ANY recently sent value
+                    // This handles out-of-order responses from rapid changes
+                    const matchIndex = this.recentlySentData.indexOf(incomingStr);
+
+                    if (matchIndex !== -1) {
+                        // Python is echoing back something we sent - ignore it
+                        DebugLog.log('IGNORED_ECHO', `Matched sent data at index ${matchIndex}, keeping current state`, 'warn');
                     } else {
-                        // Python sent NEW data (e.g., user clicked a preset button)
+                        // Python sent truly NEW data (e.g., user clicked a preset button)
                         DebugLog.log('EXTERNAL_UPDATE', 'Python sent new data, applying it', 'info');
                         this.lines = incomingLines;
-                        this.lastSentData = incomingStr;
+                        // Clear recent sent data since we're accepting external data
+                        this.recentlySentData = [incomingStr];
                     }
                 }
 
@@ -728,12 +735,19 @@
                     line.map(p => [p.x, p.y])
                 );
 
-                // Update our record of what we sent
-                this.lastSentData = JSON.stringify(data);
+                // Add to our record of recently sent values
+                const dataStr = JSON.stringify(data);
+                this.recentlySentData.push(dataStr);
+
+                // Keep only the last N values
+                while (this.recentlySentData.length > this.maxRecentSent) {
+                    this.recentlySentData.shift();
+                }
 
                 DebugLog.log('NOTIFY_CHANGE', {
                     reason: reason,
-                    data: data
+                    data: data,
+                    recentSentCount: this.recentlySentData.length
                 }, 'data');
 
                 setComponentValue(data);
