@@ -55,7 +55,12 @@
             border-radius: 4px;
             cursor: crosshair;
             background: #fafafa;
-            transition: border-color 0.1s ease;
+            transition: border-color 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        #chartCanvas.editing {
+            border-color: #4ECDC4;
+            box-shadow: 0 0 8px rgba(78, 205, 196, 0.4);
         }
 
         #chartCanvas.error-flash {
@@ -89,6 +94,53 @@
             color: #666;
             text-align: center;
             margin-top: 5px;
+        }
+
+        /* Edit mode controls */
+        .edit-controls {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+            align-items: center;
+        }
+
+        .edit-controls.hidden {
+            display: none;
+        }
+
+        .edit-status {
+            font-size: 12px;
+            color: #4ECDC4;
+            font-weight: 500;
+        }
+
+        .btn-save {
+            padding: 6px 16px;
+            background: #4ECDC4;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .btn-save:hover {
+            background: #3dbdb5;
+        }
+
+        .btn-cancel {
+            padding: 6px 16px;
+            background: #f0f0f0;
+            color: #666;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        .btn-cancel:hover {
+            background: #e0e0e0;
         }
 
         .controls {
@@ -220,6 +272,10 @@
             max-width: 700px;
         }
 
+        .debug-log.hidden {
+            display: none;
+        }
+
         .debug-log .log-entry {
             padding: 2px 0;
             border-bottom: 1px solid #333;
@@ -262,6 +318,11 @@
                 <div class="x-label" id="xLabel"></div>
             </div>
         </div>
+        <div class="edit-controls hidden" id="editControls">
+            <span class="edit-status">Unsaved changes</span>
+            <button class="btn-save" id="btnSave">Save</button>
+            <button class="btn-cancel" id="btnCancel">Cancel</button>
+        </div>
         <div class="line-selector" id="lineSelector"></div>
         <div class="controls">
             <div class="control-group">
@@ -284,47 +345,19 @@
         <div class="instructions">
             Click to add point | Click point to remove | Drag point to move
         </div>
-        <button class="debug-toggle" id="debugToggle" onclick="toggleDebugLog()">Show Debug Log</button>
-        <div class="debug-log" id="debugLog" style="display: none;"></div>
+        <button class="debug-toggle" id="debugToggle">Show Debug Log</button>
+        <div class="debug-log hidden" id="debugLog"></div>
     </div>
     <div class="tooltip" id="tooltip" style="display: none;"></div>
 
     <script>
-        // ============================================
-        // DEBUG LOG TOGGLE
-        // ============================================
-        let debugLogVisible = false;
-
-        function toggleDebugLog() {
-            console.log('[DEBUG_TOGGLE] Button clicked, current state:', debugLogVisible);
-            debugLogVisible = !debugLogVisible;
-            const logEl = document.getElementById('debugLog');
-            const toggleBtn = document.getElementById('debugToggle');
-
-            if (debugLogVisible) {
-                logEl.style.display = 'block';
-                toggleBtn.textContent = 'Hide Debug Log';
-                toggleBtn.classList.add('active');
-                console.log('[DEBUG_TOGGLE] Log is now VISIBLE');
-            } else {
-                logEl.style.display = 'none';
-                toggleBtn.textContent = 'Show Debug Log';
-                toggleBtn.classList.remove('active');
-                console.log('[DEBUG_TOGGLE] Log is now HIDDEN');
-            }
-
-            // Update iframe height to accommodate the log
-            setTimeout(() => {
-                setFrameHeight(document.body.scrollHeight);
-            }, 50);
-        }
-
         // ============================================
         // DEBUG LOGGING SYSTEM
         // ============================================
         const DebugLog = {
             maxEntries: 50,
             entries: [],
+            visible: false,
 
             log(action, data, type = 'info') {
                 const timestamp = new Date().toLocaleTimeString('en-US', {
@@ -338,14 +371,11 @@
                 const entry = { timestamp, action, data, type };
                 this.entries.push(entry);
 
-                // Keep only last N entries
                 if (this.entries.length > this.maxEntries) {
                     this.entries.shift();
                 }
 
                 this.render();
-
-                // Also log to console for developer tools
                 console.log(`[${timestamp}] ${action}:`, data);
             },
 
@@ -362,8 +392,27 @@
                     </div>`;
                 }).join('');
 
-                // Auto-scroll to bottom
                 container.scrollTop = container.scrollHeight;
+            },
+
+            toggle() {
+                this.visible = !this.visible;
+                const logEl = document.getElementById('debugLog');
+                const toggleBtn = document.getElementById('debugToggle');
+
+                if (this.visible) {
+                    logEl.classList.remove('hidden');
+                    toggleBtn.textContent = 'Hide Debug Log';
+                    toggleBtn.classList.add('active');
+                } else {
+                    logEl.classList.add('hidden');
+                    toggleBtn.textContent = 'Show Debug Log';
+                    toggleBtn.classList.remove('active');
+                }
+
+                setTimeout(() => {
+                    sendMessageToStreamlit("streamlit:setFrameHeight", {height: document.body.scrollHeight});
+                }, 50);
             }
         };
 
@@ -389,31 +438,14 @@
 
         function setComponentValue(value) {
             sendMessageToStreamlit("streamlit:setComponentValue", {value: value});
-            DebugLog.log('SENT_TO_PYTHON', value, 'data');
+            DebugLog.log('SAVED_TO_PYTHON', value, 'data');
         }
 
         // ============================================
-        // UTILITY: Deep comparison for arrays
+        // DEEP CLONE UTILITY
         // ============================================
-        function arraysEqual(a, b) {
-            if (a === b) return true;
-            if (a == null || b == null) return false;
-            if (a.length !== b.length) return false;
-
-            for (let i = 0; i < a.length; i++) {
-                if (Array.isArray(a[i]) && Array.isArray(b[i])) {
-                    if (!arraysEqual(a[i], b[i])) return false;
-                } else if (a[i] !== b[i]) {
-                    return false;
-                }
-            }
-            return true;
-        }
-
-        function linesToArray(lines) {
-            return lines.map(line =>
-                line.map(p => [p.x, p.y])
-            );
+        function deepCloneLines(lines) {
+            return lines.map(line => line.map(p => ({x: p.x, y: p.y})));
         }
 
         // ============================================
@@ -432,19 +464,13 @@
 
                 // State
                 this.lines = [];
+                this.savedLines = [];  // Last saved state (for cancel)
+                this.isEditing = false;  // Are there unsaved changes?
                 this.colors = ["#FF6B6B", "#4ECDC4", "#45B7D1"];
                 this.xRange = [0, 100];
                 this.yRange = [0, 1000];
                 this.gridSnap = null;
                 this.activeLineIndex = 0;
-
-                // STATE SYNC: Track recently sent values to Python with timestamps
-                // This prevents stale Streamlit reruns from overwriting our changes
-                // Entries expire after a timeout to allow intentional resets
-                this.recentlySentData = [];  // Array of {data: string, timestamp: number}
-                this.maxRecentSent = 20;     // Keep last N sent values
-                this.sentDataExpireMs = 5000; // Entries expire after 5 seconds
-                this.isFirstRender = true;
 
                 // Interaction state
                 this.hoveredPoint = null;
@@ -467,51 +493,21 @@
             }
 
             setConfig(config) {
-                DebugLog.log('RECEIVED_FROM_PYTHON', {
-                    lines: config.lines,
-                    isFirstRender: this.isFirstRender
-                }, 'info');
+                DebugLog.log('RECEIVED_FROM_PYTHON', { lines: config.lines }, 'info');
 
                 // Parse incoming lines
                 const incomingLines = config.lines ?
                     config.lines.map(line => line ? line.map(p => ({x: p[0], y: p[1]})) : [])
                     : [];
-                const incomingAsArray = config.lines || [];
 
-                // STATE SYNC FIX:
-                // Only update lines if:
-                // 1. This is the first render (initial data from Python), OR
-                // 2. Python is sending different data than what we last sent
-                //    (meaning user/app explicitly changed the data)
-
-                if (this.isFirstRender) {
-                    DebugLog.log('FIRST_RENDER', 'Applying initial data from Python', 'info');
+                // ONLY accept new data if NOT in editing mode
+                // This prevents Python reruns from overwriting user's unsaved changes
+                if (!this.isEditing) {
                     this.lines = incomingLines;
-                    this.recentlySentData = [{data: JSON.stringify(incomingAsArray), timestamp: Date.now()}];
-                    this.isFirstRender = false;
+                    this.savedLines = deepCloneLines(incomingLines);
+                    DebugLog.log('DATA_APPLIED', 'Applied data from Python (not editing)', 'info');
                 } else {
-                    const incomingStr = JSON.stringify(incomingAsArray);
-                    const now = Date.now();
-
-                    // Clean up expired entries first
-                    this.recentlySentData = this.recentlySentData.filter(
-                        entry => (now - entry.timestamp) < this.sentDataExpireMs
-                    );
-
-                    // Check if incoming data matches ANY recently sent value
-                    const matchIndex = this.recentlySentData.findIndex(entry => entry.data === incomingStr);
-
-                    if (matchIndex !== -1) {
-                        // Python is echoing back something we sent - ignore it
-                        const ageMs = now - this.recentlySentData[matchIndex].timestamp;
-                        DebugLog.log('IGNORED_ECHO', `Matched entry ${matchIndex} (${ageMs}ms old), buffer has ${this.recentlySentData.length} entries`, 'warn');
-                    } else {
-                        // Python sent truly NEW data (e.g., user clicked a preset button)
-                        DebugLog.log('EXTERNAL_UPDATE', 'Python sent new data, applying it', 'info');
-                        this.lines = incomingLines;
-                        // Clear recent sent data since we're accepting external data
-                        this.recentlySentData = [{data: incomingStr, timestamp: now}];
-                    }
+                    DebugLog.log('DATA_IGNORED', 'Ignored Python data (currently editing)', 'warn');
                 }
 
                 // Update other config (always apply these)
@@ -536,11 +532,41 @@
                 this.draw();
             }
 
+            // Enter editing mode (show Save/Cancel buttons)
+            enterEditMode() {
+                if (this.isEditing) return;
+                this.isEditing = true;
+                this.canvas.classList.add('editing');
+                document.getElementById('editControls').classList.remove('hidden');
+                DebugLog.log('EDIT_MODE', 'Entered editing mode');
+            }
+
+            // Save changes to Python
+            saveChanges() {
+                const data = this.lines.map(line => line.map(p => [p.x, p.y]));
+                setComponentValue(data);
+                this.savedLines = deepCloneLines(this.lines);
+                this.isEditing = false;
+                this.canvas.classList.remove('editing');
+                document.getElementById('editControls').classList.add('hidden');
+                DebugLog.log('CHANGES_SAVED', 'Saved changes to Python');
+            }
+
+            // Cancel changes and revert to saved state
+            cancelChanges() {
+                this.lines = deepCloneLines(this.savedLines);
+                this.isEditing = false;
+                this.canvas.classList.remove('editing');
+                document.getElementById('editControls').classList.add('hidden');
+                this.updateLineSelector();
+                this.draw();
+                DebugLog.log('CHANGES_CANCELLED', 'Reverted to saved state');
+            }
+
             updateLineSelector() {
                 const selector = document.getElementById('lineSelector');
                 selector.innerHTML = '';
 
-                // Ensure we have at least one line
                 if (this.lines.length === 0) {
                     this.lines.push([]);
                 }
@@ -555,33 +581,31 @@
                     } else {
                         btn.style.color = this.colors[i % this.colors.length];
                     }
-                    btn.onclick = () => {
+                    btn.addEventListener('click', () => {
                         this.activeLineIndex = i;
                         DebugLog.log('LINE_SELECTED', `Switched to Line ${i + 1}`);
                         this.updateLineSelector();
                         this.draw();
-                    };
+                    });
                     selector.appendChild(btn);
                 });
 
-                // Add "+" button for new line (max 5 lines)
                 if (this.lines.length < 5) {
                     const addBtn = document.createElement('button');
                     addBtn.className = 'add-line-btn';
                     addBtn.textContent = '+ Add Line';
-                    addBtn.onclick = () => {
+                    addBtn.addEventListener('click', () => {
+                        this.enterEditMode();
                         this.lines.push([]);
                         this.activeLineIndex = this.lines.length - 1;
                         DebugLog.log('LINE_ADDED', `Added Line ${this.lines.length}`);
                         this.updateLineSelector();
                         this.draw();
-                        this.notifyChange('added new line');
-                    };
+                    });
                     selector.appendChild(addBtn);
                 }
             }
 
-            // Coordinate conversion
             dataToCanvas(x, y) {
                 const chartWidth = this.canvas.width - this.padding.left - this.padding.right;
                 const chartHeight = this.canvas.height - this.padding.top - this.padding.bottom;
@@ -603,7 +627,6 @@
                 let y = this.yRange[0] +
                     (1 - (canvasY - this.padding.top) / chartHeight) * (this.yRange[1] - this.yRange[0]);
 
-                // Apply grid snapping
                 if (this.gridSnap) {
                     const xStep = (this.xRange[1] - this.xRange[0]) * this.gridSnap[0] / 100;
                     const yStep = (this.yRange[1] - this.yRange[0]) * this.gridSnap[1] / 100;
@@ -611,20 +634,16 @@
                     y = Math.round(y / yStep) * yStep;
                 }
 
-                // Clamp to range
                 x = Math.max(this.xRange[0], Math.min(this.xRange[1], x));
                 y = Math.max(this.yRange[0], Math.min(this.yRange[1], y));
 
                 return {x, y};
             }
 
-            // Check if X coordinate would conflict with existing point in a line
-            // excludeIndex: point index to exclude (for drag operations)
             hasConflictingX(lineIndex, x, excludeIndex = -1) {
                 const line = this.lines[lineIndex];
                 if (!line) return false;
 
-                // Tolerance: points within 1% of X range are considered "same X"
                 const tolerance = (this.xRange[1] - this.xRange[0]) * 0.01;
 
                 for (let i = 0; i < line.length; i++) {
@@ -666,7 +685,6 @@
                 const canvasX = e.clientX - rect.left;
                 const canvasY = e.clientY - rect.top;
 
-                // Detect drag start
                 if (this.draggingPoint && !this.isDragging) {
                     const moved = Math.sqrt(
                         Math.pow(canvasX - this.dragStartX, 2) +
@@ -682,16 +700,12 @@
                 }
 
                 if (this.isDragging && this.draggingPoint) {
-                    // Update point position
                     const dataPos = this.canvasToData(canvasX, canvasY);
                     const line = this.lines[this.draggingPoint.lineIndex];
-                    const oldPos = {...line[this.draggingPoint.pointIndex]};
                     line[this.draggingPoint.pointIndex] = dataPos;
 
-                    // Re-sort line by X
                     const pointData = line[this.draggingPoint.pointIndex];
                     line.sort((a, b) => a.x - b.x);
-                    // Update point index after sort
                     const newIndex = line.indexOf(pointData);
                     if (newIndex !== this.draggingPoint.pointIndex) {
                         this.draggingPoint.pointIndex = newIndex;
@@ -700,7 +714,6 @@
                     this.draw();
                     this.showTooltip(canvasX, canvasY, dataPos);
                 } else {
-                    // Check for hover
                     const point = this.findPointAt(canvasX, canvasY);
                     if (point) {
                         this.hoveredPoint = point;
@@ -728,16 +741,13 @@
                 const point = this.findPointAt(canvasX, canvasY);
 
                 if (point) {
-                    // Start dragging or prepare for removal
                     this.draggingPoint = point;
                     this.dragStartTime = Date.now();
                     this.dragStartX = canvasX;
                     this.dragStartY = canvasY;
-                    // Switch to this line
                     this.activeLineIndex = point.lineIndex;
 
                     const p = this.lines[point.lineIndex][point.pointIndex];
-                    // Save original position for potential revert on cancelled drag
                     this.dragOriginalPos = {x: p.x, y: p.y};
 
                     DebugLog.log('MOUSEDOWN_ON_POINT', {
@@ -748,26 +758,23 @@
 
                     this.updateLineSelector();
                 } else if (this.isInChartArea(canvasX, canvasY)) {
-                    // Add new point to active line
                     const dataPos = this.canvasToData(canvasX, canvasY);
 
-                    // Ensure active line exists
                     while (this.lines.length <= this.activeLineIndex) {
                         this.lines.push([]);
                     }
 
-                    // Check for X conflict before adding
                     if (this.hasConflictingX(this.activeLineIndex, dataPos.x)) {
                         DebugLog.log('ADD_BLOCKED', {
                             reason: 'X coordinate too close to existing point',
                             coords: {x: dataPos.x.toFixed(2), y: dataPos.y.toFixed(2)}
                         }, 'warn');
                         this.showErrorFlash('Cannot add - X too close to existing point');
-                        return; // Don't add the point
+                        return;
                     }
 
+                    this.enterEditMode();
                     this.lines[this.activeLineIndex].push(dataPos);
-                    // Sort by X
                     this.lines[this.activeLineIndex].sort((a, b) => a.x - b.x);
 
                     DebugLog.log('POINT_ADDED', {
@@ -778,7 +785,6 @@
 
                     this.updateLineSelector();
                     this.draw();
-                    this.notifyChange('added point');
                 }
             }
 
@@ -795,7 +801,7 @@
                     );
 
                     if (elapsed < 300 && moved < 5) {
-                        // This was a click, remove the point
+                        this.enterEditMode();
                         const removedPoint = this.lines[this.draggingPoint.lineIndex][this.draggingPoint.pointIndex];
                         this.lines[this.draggingPoint.lineIndex].splice(this.draggingPoint.pointIndex, 1);
 
@@ -804,18 +810,12 @@
                             coords: {x: removedPoint.x.toFixed(2), y: removedPoint.y.toFixed(2)},
                             remaining: this.lines[this.draggingPoint.lineIndex].length
                         });
-
-                        this.notifyChange('removed point');
                     } else if (this.isDragging) {
-                        // Was a drag operation - check for X conflict
                         const line = this.lines[this.draggingPoint.lineIndex];
                         const currentPoint = line[this.draggingPoint.pointIndex];
-
-                        // Find the point's current index after sorting
                         const currentIndex = line.findIndex(p => p === currentPoint);
 
                         if (this.hasConflictingX(this.draggingPoint.lineIndex, currentPoint.x, currentIndex)) {
-                            // X conflict! Revert to original position
                             line[currentIndex] = {...this.dragOriginalPos};
                             line.sort((a, b) => a.x - b.x);
 
@@ -824,14 +824,12 @@
                                 restoredTo: {x: this.dragOriginalPos.x.toFixed(2), y: this.dragOriginalPos.y.toFixed(2)}
                             }, 'warn');
                             this.showErrorFlash('Cannot move - X too close to existing point');
-                            // Don't notify Python - we reverted
                         } else {
-                            // Valid drag
+                            this.enterEditMode();
                             DebugLog.log('DRAG_END', {
                                 line: this.draggingPoint.lineIndex + 1,
                                 newCoords: {x: currentPoint.x.toFixed(2), y: currentPoint.y.toFixed(2)}
                             });
-                            this.notifyChange('dragged point');
                         }
                     }
 
@@ -845,17 +843,14 @@
 
             handleMouseLeave() {
                 if (this.isDragging && this.draggingPoint && this.dragOriginalPos) {
-                    // REVERT to original position - don't save edge-clamped position
                     const line = this.lines[this.draggingPoint.lineIndex];
                     line[this.draggingPoint.pointIndex] = {...this.dragOriginalPos};
-                    // Re-sort by X (in case it moved)
                     line.sort((a, b) => a.x - b.x);
 
                     DebugLog.log('DRAG_REVERTED', {
                         reason: 'Mouse left canvas',
                         restoredTo: {x: this.dragOriginalPos.x.toFixed(2), y: this.dragOriginalPos.y.toFixed(2)}
                     }, 'warn');
-                    // Don't notify Python - we reverted to original state
                 }
                 this.isDragging = false;
                 this.draggingPoint = null;
@@ -878,45 +873,15 @@
             }
 
             showErrorFlash(message) {
-                // Flash the canvas border
                 this.canvas.classList.add('error-flash');
-
-                // Show error message
                 const errorEl = document.getElementById('errorMessage');
                 if (message) errorEl.textContent = message;
                 errorEl.classList.add('visible');
 
-                // Remove after brief delay
                 setTimeout(() => {
                     this.canvas.classList.remove('error-flash');
                     errorEl.classList.remove('visible');
                 }, 800);
-            }
-
-            notifyChange(reason) {
-                // Convert to format expected by Python
-                const data = this.lines.map(line =>
-                    line.map(p => [p.x, p.y])
-                );
-
-                // Add to our record of recently sent values with timestamp
-                const dataStr = JSON.stringify(data);
-                const now = Date.now();
-
-                this.recentlySentData.push({data: dataStr, timestamp: now});
-
-                // Keep only the last N values
-                while (this.recentlySentData.length > this.maxRecentSent) {
-                    this.recentlySentData.shift();
-                }
-
-                DebugLog.log('NOTIFY_CHANGE', {
-                    reason: reason,
-                    data: data,
-                    bufferSize: this.recentlySentData.length
-                }, 'data');
-
-                setComponentValue(data);
             }
 
             updateRange(axis, minOrMax, value) {
@@ -940,23 +905,17 @@
                 const width = this.canvas.width;
                 const height = this.canvas.height;
 
-                // Clear canvas
                 ctx.fillStyle = '#fafafa';
                 ctx.fillRect(0, 0, width, height);
 
-                // Draw grid
                 this.drawGrid();
-
-                // Draw axes
                 this.drawAxes();
 
-                // Draw lines and points
                 this.lines.forEach((line, lineIndex) => {
                     if (line.length === 0) return;
 
                     const color = this.colors[lineIndex % this.colors.length];
 
-                    // Draw line segments
                     if (line.length >= 2) {
                         ctx.beginPath();
                         ctx.strokeStyle = color;
@@ -972,7 +931,6 @@
                         ctx.stroke();
                     }
 
-                    // Draw points
                     line.forEach((point, pointIndex) => {
                         const canvasPoint = this.dataToCanvas(point.x, point.y);
                         const isHovered = this.hoveredPoint &&
@@ -982,7 +940,6 @@
                             this.draggingPoint.lineIndex === lineIndex &&
                             this.draggingPoint.pointIndex === pointIndex;
 
-                        // Draw outer ring for hover/drag
                         if (isHovered || isDragging) {
                             ctx.beginPath();
                             ctx.arc(canvasPoint.x, canvasPoint.y, this.dotRadius + 4, 0, Math.PI * 2);
@@ -990,7 +947,6 @@
                             ctx.fill();
                         }
 
-                        // Draw point
                         ctx.beginPath();
                         ctx.arc(canvasPoint.x, canvasPoint.y, this.dotRadius, 0, Math.PI * 2);
                         ctx.fillStyle = color;
@@ -1010,18 +966,16 @@
                 ctx.strokeStyle = '#e0e0e0';
                 ctx.lineWidth = 1;
 
-                const xDivisions = 10;
-                for (let i = 0; i <= xDivisions; i++) {
-                    const x = this.padding.left + (i / xDivisions) * chartWidth;
+                for (let i = 0; i <= 10; i++) {
+                    const x = this.padding.left + (i / 10) * chartWidth;
                     ctx.beginPath();
                     ctx.moveTo(x, this.padding.top);
                     ctx.lineTo(x, this.padding.top + chartHeight);
                     ctx.stroke();
                 }
 
-                const yDivisions = 10;
-                for (let i = 0; i <= yDivisions; i++) {
-                    const y = this.padding.top + (i / yDivisions) * chartHeight;
+                for (let i = 0; i <= 10; i++) {
+                    const y = this.padding.top + (i / 10) * chartHeight;
                     ctx.beginPath();
                     ctx.moveTo(this.padding.left, y);
                     ctx.lineTo(this.padding.left + chartWidth, y);
@@ -1037,18 +991,16 @@
                 ctx.fillStyle = '#666';
                 ctx.font = '11px -apple-system, BlinkMacSystemFont, sans-serif';
 
-                const xDivisions = 5;
-                for (let i = 0; i <= xDivisions; i++) {
-                    const x = this.padding.left + (i / xDivisions) * chartWidth;
-                    const value = this.xRange[0] + (i / xDivisions) * (this.xRange[1] - this.xRange[0]);
+                for (let i = 0; i <= 5; i++) {
+                    const x = this.padding.left + (i / 5) * chartWidth;
+                    const value = this.xRange[0] + (i / 5) * (this.xRange[1] - this.xRange[0]);
                     ctx.textAlign = 'center';
                     ctx.fillText(value.toFixed(0), x, this.canvas.height - this.padding.bottom + 15);
                 }
 
-                const yDivisions = 5;
-                for (let i = 0; i <= yDivisions; i++) {
-                    const y = this.padding.top + (i / yDivisions) * chartHeight;
-                    const value = this.yRange[1] - (i / yDivisions) * (this.yRange[1] - this.yRange[0]);
+                for (let i = 0; i <= 5; i++) {
+                    const y = this.padding.top + (i / 5) * chartHeight;
+                    const value = this.yRange[1] - (i / 5) * (this.yRange[1] - this.yRange[0]);
                     ctx.textAlign = 'right';
                     ctx.fillText(value.toFixed(0), this.padding.left - 5, y + 4);
                 }
@@ -1066,18 +1018,22 @@
             const canvas = document.getElementById('chartCanvas');
             editor = new ChartEditor(canvas);
 
-            // Backup event listener for debug toggle (in case onclick doesn't work in iframe)
-            const debugBtn = document.getElementById('debugToggle');
-            if (debugBtn) {
-                debugBtn.addEventListener('click', (e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    toggleDebugLog();
-                });
-                console.log('[INIT] Debug toggle event listener attached');
-            }
+            // Debug toggle button
+            document.getElementById('debugToggle').addEventListener('click', () => {
+                DebugLog.toggle();
+            });
 
-            // Handle range input changes
+            // Save button
+            document.getElementById('btnSave').addEventListener('click', () => {
+                editor.saveChanges();
+            });
+
+            // Cancel button
+            document.getElementById('btnCancel').addEventListener('click', () => {
+                editor.cancelChanges();
+            });
+
+            // Range input changes
             document.getElementById('xMin').addEventListener('change', (e) => {
                 editor.updateRange('x', 'min', e.target.value);
             });
@@ -1110,7 +1066,6 @@
                         height: args.height || 450
                     });
 
-                    // Set frame height
                     setTimeout(() => {
                         setFrameHeight(document.body.scrollHeight);
                     }, 100);
@@ -1120,7 +1075,6 @@
             setComponentReady();
         }
 
-        // Start when DOM is ready
         if (document.readyState === 'loading') {
             document.addEventListener('DOMContentLoaded', init);
         } else {
