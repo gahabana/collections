@@ -656,7 +656,25 @@
             }
 
             findPointAt(canvasX, canvasY) {
+                // First check the active line (priority for overlapping points)
+                const activeLine = this.lines[this.activeLineIndex];
+                if (activeLine) {
+                    for (let pointIndex = 0; pointIndex < activeLine.length; pointIndex++) {
+                        const point = activeLine[pointIndex];
+                        const canvasPoint = this.dataToCanvas(point.x, point.y);
+                        const dist = Math.sqrt(
+                            Math.pow(canvasX - canvasPoint.x, 2) +
+                            Math.pow(canvasY - canvasPoint.y, 2)
+                        );
+                        if (dist <= this.hoverRadius) {
+                            return {lineIndex: this.activeLineIndex, pointIndex};
+                        }
+                    }
+                }
+
+                // Then check other lines
                 for (let lineIndex = 0; lineIndex < this.lines.length; lineIndex++) {
+                    if (lineIndex === this.activeLineIndex) continue;
                     const line = this.lines[lineIndex];
                     for (let pointIndex = 0; pointIndex < line.length; pointIndex++) {
                         const point = line[pointIndex];
@@ -712,14 +730,14 @@
                     }
 
                     this.draw();
-                    this.showTooltip(canvasX, canvasY, dataPos);
+                    this.showTooltip(canvasX, canvasY, dataPos, this.draggingPoint.lineIndex);
                 } else {
                     const point = this.findPointAt(canvasX, canvasY);
                     if (point) {
                         this.hoveredPoint = point;
                         this.canvas.style.cursor = 'pointer';
                         const p = this.lines[point.lineIndex][point.pointIndex];
-                        this.showTooltip(canvasX, canvasY, p);
+                        this.showTooltip(canvasX, canvasY, p, point.lineIndex);
                     } else if (this.isInChartArea(canvasX, canvasY)) {
                         this.hoveredPoint = null;
                         this.canvas.style.cursor = 'crosshair';
@@ -860,9 +878,13 @@
                 this.draw();
             }
 
-            showTooltip(x, y, dataPoint) {
+            showTooltip(x, y, dataPoint, lineIndex = null) {
                 const tooltip = document.getElementById('tooltip');
-                tooltip.textContent = `(${dataPoint.x.toFixed(2)}, ${dataPoint.y.toFixed(2)})`;
+                let text = `(${dataPoint.x.toFixed(2)}, ${dataPoint.y.toFixed(2)})`;
+                if (lineIndex !== null) {
+                    text = `Line ${lineIndex + 1}: ${text}`;
+                }
+                tooltip.textContent = text;
                 tooltip.style.left = (x + 15) + 'px';
                 tooltip.style.top = (y - 10) + 'px';
                 tooltip.style.display = 'block';
@@ -900,6 +922,43 @@
                 this.draw();
             }
 
+            // Find all points that overlap with points from other lines
+            findOverlappingPoints() {
+                const overlaps = new Map(); // key: "x,y" -> array of {lineIndex, pointIndex}
+                const tolerance = (this.xRange[1] - this.xRange[0]) * 0.01;
+                const yTolerance = (this.yRange[1] - this.yRange[0]) * 0.01;
+
+                this.lines.forEach((line, lineIndex) => {
+                    line.forEach((point, pointIndex) => {
+                        // Check against all other lines
+                        this.lines.forEach((otherLine, otherLineIndex) => {
+                            if (otherLineIndex <= lineIndex) return; // Skip same and already-checked lines
+
+                            otherLine.forEach((otherPoint, otherPointIndex) => {
+                                if (Math.abs(point.x - otherPoint.x) < tolerance &&
+                                    Math.abs(point.y - otherPoint.y) < yTolerance) {
+                                    // Found an overlap
+                                    const key = `${Math.round(point.x * 100)},${Math.round(point.y * 100)}`;
+                                    if (!overlaps.has(key)) {
+                                        overlaps.set(key, [{lineIndex, pointIndex}]);
+                                    }
+                                    const arr = overlaps.get(key);
+                                    // Add both points if not already added
+                                    if (!arr.some(p => p.lineIndex === lineIndex && p.pointIndex === pointIndex)) {
+                                        arr.push({lineIndex, pointIndex});
+                                    }
+                                    if (!arr.some(p => p.lineIndex === otherLineIndex && p.pointIndex === otherPointIndex)) {
+                                        arr.push({lineIndex: otherLineIndex, pointIndex: otherPointIndex});
+                                    }
+                                }
+                            });
+                        });
+                    });
+                });
+
+                return overlaps;
+            }
+
             draw() {
                 const ctx = this.ctx;
                 const width = this.canvas.width;
@@ -911,15 +970,38 @@
                 this.drawGrid();
                 this.drawAxes();
 
-                this.lines.forEach((line, lineIndex) => {
-                    if (line.length === 0) return;
+                // Find overlapping points
+                const overlaps = this.findOverlappingPoints();
+                const overlappingSet = new Set();
+                overlaps.forEach(points => {
+                    points.forEach(p => overlappingSet.add(`${p.lineIndex},${p.pointIndex}`));
+                });
+
+                // Create draw order: active line last (on top)
+                const drawOrder = [];
+                for (let i = 0; i < this.lines.length; i++) {
+                    if (i !== this.activeLineIndex) {
+                        drawOrder.push(i);
+                    }
+                }
+                drawOrder.push(this.activeLineIndex);
+
+                // Draw lines and dots in order (active line last = on top)
+                drawOrder.forEach(lineIndex => {
+                    const line = this.lines[lineIndex];
+                    if (!line || line.length === 0) return;
 
                     const color = this.colors[lineIndex % this.colors.length];
+                    const isActiveLine = lineIndex === this.activeLineIndex;
 
+                    // Draw connecting lines
                     if (line.length >= 2) {
                         ctx.beginPath();
                         ctx.strokeStyle = color;
-                        ctx.lineWidth = this.lineWidth;
+                        ctx.lineWidth = isActiveLine ? this.lineWidth + 1 : this.lineWidth;
+                        if (!isActiveLine) {
+                            ctx.globalAlpha = 0.6;
+                        }
 
                         const firstPoint = this.dataToCanvas(line[0].x, line[0].y);
                         ctx.moveTo(firstPoint.x, firstPoint.y);
@@ -929,8 +1011,10 @@
                             ctx.lineTo(point.x, point.y);
                         }
                         ctx.stroke();
+                        ctx.globalAlpha = 1;
                     }
 
+                    // Draw dots
                     line.forEach((point, pointIndex) => {
                         const canvasPoint = this.dataToCanvas(point.x, point.y);
                         const isHovered = this.hoveredPoint &&
@@ -939,7 +1023,9 @@
                         const isDragging = this.draggingPoint &&
                             this.draggingPoint.lineIndex === lineIndex &&
                             this.draggingPoint.pointIndex === pointIndex;
+                        const isOverlapping = overlappingSet.has(`${lineIndex},${pointIndex}`);
 
+                        // Hover/drag highlight
                         if (isHovered || isDragging) {
                             ctx.beginPath();
                             ctx.arc(canvasPoint.x, canvasPoint.y, this.dotRadius + 4, 0, Math.PI * 2);
@@ -947,14 +1033,51 @@
                             ctx.fill();
                         }
 
+                        // Draw dot (slightly smaller for non-active lines)
+                        const radius = isActiveLine ? this.dotRadius : this.dotRadius - 1;
                         ctx.beginPath();
-                        ctx.arc(canvasPoint.x, canvasPoint.y, this.dotRadius, 0, Math.PI * 2);
-                        ctx.fillStyle = color;
+                        ctx.arc(canvasPoint.x, canvasPoint.y, radius, 0, Math.PI * 2);
+                        ctx.fillStyle = isActiveLine ? color : color + 'CC';
                         ctx.fill();
                         ctx.strokeStyle = '#fff';
                         ctx.lineWidth = 2;
                         ctx.stroke();
+
+                        // Draw overlap indicator (concentric dashed ring)
+                        if (isOverlapping) {
+                            ctx.beginPath();
+                            ctx.arc(canvasPoint.x, canvasPoint.y, this.dotRadius + 6, 0, Math.PI * 2);
+                            ctx.strokeStyle = '#333';
+                            ctx.lineWidth = 2;
+                            ctx.setLineDash([3, 3]);
+                            ctx.stroke();
+                            ctx.setLineDash([]);
+                        }
                     });
+                });
+
+                // Draw overlap badges (count indicator) - only once per overlap location
+                overlaps.forEach((points, key) => {
+                    if (points.length > 1) {
+                        // Use the first point's position for the badge
+                        const firstPt = this.lines[points[0].lineIndex][points[0].pointIndex];
+                        const canvasPoint = this.dataToCanvas(firstPt.x, firstPt.y);
+
+                        // Draw badge
+                        const badgeX = canvasPoint.x + this.dotRadius + 4;
+                        const badgeY = canvasPoint.y - this.dotRadius - 4;
+
+                        ctx.beginPath();
+                        ctx.arc(badgeX, badgeY, 8, 0, Math.PI * 2);
+                        ctx.fillStyle = '#333';
+                        ctx.fill();
+
+                        ctx.fillStyle = '#fff';
+                        ctx.font = 'bold 10px sans-serif';
+                        ctx.textAlign = 'center';
+                        ctx.textBaseline = 'middle';
+                        ctx.fillText(points.length.toString(), badgeX, badgeY);
+                    }
                 });
             }
 
