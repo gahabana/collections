@@ -466,10 +466,18 @@ def interpolate_line(
     return results
 
 
+# Import object-oriented API
+from .chart_object import ChartEditor, get_chart
+
+
 # Export public API
 __all__ = [
-    # Main component
+    # Main component (functional)
     "chart_editor",
+
+    # Object-oriented API
+    "ChartEditor",
+    "get_chart",
 
     # Type aliases
     "Point",
