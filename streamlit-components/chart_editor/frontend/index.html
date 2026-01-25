@@ -156,6 +156,50 @@
             margin-top: 10px;
             text-align: center;
         }
+
+        /* Debug log styles */
+        .debug-log {
+            margin-top: 15px;
+            padding: 10px;
+            background: #1e1e1e;
+            border-radius: 4px;
+            max-height: 150px;
+            overflow-y: auto;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 11px;
+            width: 100%;
+            max-width: 700px;
+        }
+
+        .debug-log .log-entry {
+            padding: 2px 0;
+            border-bottom: 1px solid #333;
+        }
+
+        .debug-log .log-entry:last-child {
+            border-bottom: none;
+        }
+
+        .debug-log .timestamp {
+            color: #888;
+        }
+
+        .debug-log .action {
+            color: #4ECDC4;
+            font-weight: bold;
+        }
+
+        .debug-log .data {
+            color: #FFEAA7;
+        }
+
+        .debug-log .info {
+            color: #74b9ff;
+        }
+
+        .debug-log .warn {
+            color: #fdcb6e;
+        }
     </style>
 </head>
 <body>
@@ -190,11 +234,62 @@
         <div class="instructions">
             Click to add point | Click point to remove | Drag point to move
         </div>
+        <div class="debug-log" id="debugLog"></div>
     </div>
     <div class="tooltip" id="tooltip" style="display: none;"></div>
 
     <script>
-        // Streamlit component communication
+        // ============================================
+        // DEBUG LOGGING SYSTEM
+        // ============================================
+        const DebugLog = {
+            maxEntries: 50,
+            entries: [],
+
+            log(action, data, type = 'info') {
+                const timestamp = new Date().toLocaleTimeString('en-US', {
+                    hour12: false,
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                    fractionalSecondDigits: 3
+                });
+
+                const entry = { timestamp, action, data, type };
+                this.entries.push(entry);
+
+                // Keep only last N entries
+                if (this.entries.length > this.maxEntries) {
+                    this.entries.shift();
+                }
+
+                this.render();
+
+                // Also log to console for developer tools
+                console.log(`[${timestamp}] ${action}:`, data);
+            },
+
+            render() {
+                const container = document.getElementById('debugLog');
+                if (!container) return;
+
+                container.innerHTML = this.entries.map(e => {
+                    const dataStr = typeof e.data === 'object' ? JSON.stringify(e.data) : e.data;
+                    return `<div class="log-entry">
+                        <span class="timestamp">[${e.timestamp}]</span>
+                        <span class="action">${e.action}</span>:
+                        <span class="${e.type}">${dataStr}</span>
+                    </div>`;
+                }).join('');
+
+                // Auto-scroll to bottom
+                container.scrollTop = container.scrollHeight;
+            }
+        };
+
+        // ============================================
+        // STREAMLIT COMPONENT COMMUNICATION
+        // ============================================
         function sendMessageToStreamlit(type, data) {
             const outData = Object.assign({
                 isStreamlitMessage: true,
@@ -205,6 +300,7 @@
 
         function setComponentReady() {
             sendMessageToStreamlit("streamlit:componentReady", {apiVersion: 1});
+            DebugLog.log('COMPONENT_READY', 'Sent ready signal to Streamlit');
         }
 
         function setFrameHeight(height) {
@@ -213,9 +309,36 @@
 
         function setComponentValue(value) {
             sendMessageToStreamlit("streamlit:setComponentValue", {value: value});
+            DebugLog.log('SENT_TO_PYTHON', value, 'data');
         }
 
-        // Chart Editor Class
+        // ============================================
+        // UTILITY: Deep comparison for arrays
+        // ============================================
+        function arraysEqual(a, b) {
+            if (a === b) return true;
+            if (a == null || b == null) return false;
+            if (a.length !== b.length) return false;
+
+            for (let i = 0; i < a.length; i++) {
+                if (Array.isArray(a[i]) && Array.isArray(b[i])) {
+                    if (!arraysEqual(a[i], b[i])) return false;
+                } else if (a[i] !== b[i]) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        function linesToArray(lines) {
+            return lines.map(line =>
+                line.map(p => [p.x, p.y])
+            );
+        }
+
+        // ============================================
+        // CHART EDITOR CLASS
+        // ============================================
         class ChartEditor {
             constructor(canvas) {
                 this.canvas = canvas;
@@ -235,9 +358,14 @@
                 this.gridSnap = null;
                 this.activeLineIndex = 0;
 
+                // STATE SYNC: Track what we last sent to Python
+                // This prevents Python's stale data from overwriting our changes
+                this.lastSentData = null;
+                this.isFirstRender = true;
+
                 // Interaction state
-                this.hoveredPoint = null; // {lineIndex, pointIndex}
-                this.draggingPoint = null; // {lineIndex, pointIndex}
+                this.hoveredPoint = null;
+                this.draggingPoint = null;
                 this.isDragging = false;
 
                 // Bind event handlers
@@ -251,14 +379,48 @@
                 canvas.addEventListener('mousedown', this.handleMouseDown);
                 canvas.addEventListener('mouseup', this.handleMouseUp);
                 canvas.addEventListener('mouseleave', this.handleMouseLeave);
+
+                DebugLog.log('EDITOR_INIT', 'ChartEditor initialized');
             }
 
             setConfig(config) {
-                if (config.lines) {
-                    this.lines = config.lines.map(line =>
-                        line ? line.map(p => ({x: p[0], y: p[1]})) : []
-                    );
+                DebugLog.log('RECEIVED_FROM_PYTHON', {
+                    lines: config.lines,
+                    isFirstRender: this.isFirstRender
+                }, 'info');
+
+                // Parse incoming lines
+                const incomingLines = config.lines ?
+                    config.lines.map(line => line ? line.map(p => ({x: p[0], y: p[1]})) : [])
+                    : [];
+                const incomingAsArray = config.lines || [];
+
+                // STATE SYNC FIX:
+                // Only update lines if:
+                // 1. This is the first render (initial data from Python), OR
+                // 2. Python is sending different data than what we last sent
+                //    (meaning user/app explicitly changed the data)
+
+                if (this.isFirstRender) {
+                    DebugLog.log('FIRST_RENDER', 'Applying initial data from Python', 'info');
+                    this.lines = incomingLines;
+                    this.lastSentData = JSON.stringify(incomingAsArray);
+                    this.isFirstRender = false;
+                } else {
+                    const incomingStr = JSON.stringify(incomingAsArray);
+
+                    if (this.lastSentData === incomingStr) {
+                        // Python is echoing back what we sent - ignore to keep our current state
+                        DebugLog.log('IGNORED_ECHO', 'Python echoed our data back, keeping current state', 'warn');
+                    } else {
+                        // Python sent NEW data (e.g., user clicked a preset button)
+                        DebugLog.log('EXTERNAL_UPDATE', 'Python sent new data, applying it', 'info');
+                        this.lines = incomingLines;
+                        this.lastSentData = incomingStr;
+                    }
                 }
+
+                // Update other config (always apply these)
                 if (config.xRange) this.xRange = config.xRange;
                 if (config.yRange) this.yRange = config.yRange;
                 if (config.colors) this.colors = config.colors;
@@ -284,10 +446,15 @@
                 const selector = document.getElementById('lineSelector');
                 selector.innerHTML = '';
 
+                // Ensure we have at least one line
+                if (this.lines.length === 0) {
+                    this.lines.push([]);
+                }
+
                 this.lines.forEach((line, i) => {
                     const btn = document.createElement('button');
                     btn.className = 'line-btn' + (i === this.activeLineIndex ? ' active' : '');
-                    btn.textContent = `Line ${i + 1}`;
+                    btn.textContent = `Line ${i + 1} (${line.length} pts)`;
                     btn.style.borderColor = this.colors[i % this.colors.length];
                     if (i === this.activeLineIndex) {
                         btn.style.backgroundColor = this.colors[i % this.colors.length];
@@ -296,6 +463,7 @@
                     }
                     btn.onclick = () => {
                         this.activeLineIndex = i;
+                        DebugLog.log('LINE_SELECTED', `Switched to Line ${i + 1}`);
                         this.updateLineSelector();
                         this.draw();
                     };
@@ -310,9 +478,10 @@
                     addBtn.onclick = () => {
                         this.lines.push([]);
                         this.activeLineIndex = this.lines.length - 1;
+                        DebugLog.log('LINE_ADDED', `Added Line ${this.lines.length}`);
                         this.updateLineSelector();
                         this.draw();
-                        this.notifyChange();
+                        this.notifyChange('added new line');
                     };
                     selector.appendChild(addBtn);
                 }
@@ -385,17 +554,36 @@
                 const canvasX = e.clientX - rect.left;
                 const canvasY = e.clientY - rect.top;
 
+                // Detect drag start
+                if (this.draggingPoint && !this.isDragging) {
+                    const moved = Math.sqrt(
+                        Math.pow(canvasX - this.dragStartX, 2) +
+                        Math.pow(canvasY - this.dragStartY, 2)
+                    );
+                    if (moved > 5) {
+                        this.isDragging = true;
+                        DebugLog.log('DRAG_START', {
+                            line: this.draggingPoint.lineIndex + 1,
+                            point: this.draggingPoint.pointIndex
+                        });
+                    }
+                }
+
                 if (this.isDragging && this.draggingPoint) {
                     // Update point position
                     const dataPos = this.canvasToData(canvasX, canvasY);
                     const line = this.lines[this.draggingPoint.lineIndex];
+                    const oldPos = {...line[this.draggingPoint.pointIndex]};
                     line[this.draggingPoint.pointIndex] = dataPos;
 
                     // Re-sort line by X
                     const pointData = line[this.draggingPoint.pointIndex];
                     line.sort((a, b) => a.x - b.x);
                     // Update point index after sort
-                    this.draggingPoint.pointIndex = line.indexOf(pointData);
+                    const newIndex = line.indexOf(pointData);
+                    if (newIndex !== this.draggingPoint.pointIndex) {
+                        this.draggingPoint.pointIndex = newIndex;
+                    }
 
                     this.draw();
                     this.showTooltip(canvasX, canvasY, dataPos);
@@ -435,18 +623,37 @@
                     this.dragStartY = canvasY;
                     // Switch to this line
                     this.activeLineIndex = point.lineIndex;
+
+                    const p = this.lines[point.lineIndex][point.pointIndex];
+                    DebugLog.log('MOUSEDOWN_ON_POINT', {
+                        line: point.lineIndex + 1,
+                        pointIndex: point.pointIndex,
+                        coords: {x: p.x.toFixed(2), y: p.y.toFixed(2)}
+                    });
+
                     this.updateLineSelector();
                 } else if (this.isInChartArea(canvasX, canvasY)) {
                     // Add new point to active line
                     const dataPos = this.canvasToData(canvasX, canvasY);
-                    if (!this.lines[this.activeLineIndex]) {
-                        this.lines[this.activeLineIndex] = [];
+
+                    // Ensure active line exists
+                    while (this.lines.length <= this.activeLineIndex) {
+                        this.lines.push([]);
                     }
+
                     this.lines[this.activeLineIndex].push(dataPos);
                     // Sort by X
                     this.lines[this.activeLineIndex].sort((a, b) => a.x - b.x);
+
+                    DebugLog.log('POINT_ADDED', {
+                        line: this.activeLineIndex + 1,
+                        coords: {x: dataPos.x.toFixed(2), y: dataPos.y.toFixed(2)},
+                        totalPoints: this.lines[this.activeLineIndex].length
+                    });
+
+                    this.updateLineSelector();
                     this.draw();
-                    this.notifyChange();
+                    this.notifyChange('added point');
                 }
             }
 
@@ -462,23 +669,39 @@
                         Math.pow(canvasY - this.dragStartY, 2)
                     );
 
-                    if (elapsed < 200 && moved < 5) {
+                    if (elapsed < 300 && moved < 5) {
                         // This was a click, remove the point
-                        this.lines[this.draggingPoint.lineIndex].splice(
-                            this.draggingPoint.pointIndex, 1
-                        );
+                        const removedPoint = this.lines[this.draggingPoint.lineIndex][this.draggingPoint.pointIndex];
+                        this.lines[this.draggingPoint.lineIndex].splice(this.draggingPoint.pointIndex, 1);
+
+                        DebugLog.log('POINT_REMOVED', {
+                            line: this.draggingPoint.lineIndex + 1,
+                            coords: {x: removedPoint.x.toFixed(2), y: removedPoint.y.toFixed(2)},
+                            remaining: this.lines[this.draggingPoint.lineIndex].length
+                        });
+
+                        this.notifyChange('removed point');
+                    } else if (this.isDragging) {
+                        // Was a drag operation
+                        const p = this.lines[this.draggingPoint.lineIndex][this.draggingPoint.pointIndex];
+                        DebugLog.log('DRAG_END', {
+                            line: this.draggingPoint.lineIndex + 1,
+                            newCoords: {x: p.x.toFixed(2), y: p.y.toFixed(2)}
+                        });
+                        this.notifyChange('dragged point');
                     }
 
                     this.isDragging = false;
                     this.draggingPoint = null;
+                    this.updateLineSelector();
                     this.draw();
-                    this.notifyChange();
                 }
             }
 
             handleMouseLeave() {
                 if (this.isDragging && this.draggingPoint) {
-                    this.notifyChange();
+                    DebugLog.log('DRAG_CANCELLED', 'Mouse left canvas during drag');
+                    this.notifyChange('drag ended (mouse left)');
                 }
                 this.isDragging = false;
                 this.draggingPoint = null;
@@ -499,11 +722,20 @@
                 document.getElementById('tooltip').style.display = 'none';
             }
 
-            notifyChange() {
+            notifyChange(reason) {
                 // Convert to format expected by Python
                 const data = this.lines.map(line =>
                     line.map(p => [p.x, p.y])
                 );
+
+                // Update our record of what we sent
+                this.lastSentData = JSON.stringify(data);
+
+                DebugLog.log('NOTIFY_CHANGE', {
+                    reason: reason,
+                    data: data
+                }, 'data');
+
                 setComponentValue(data);
             }
 
@@ -519,6 +751,7 @@
                     else this.yRange[1] = val;
                 }
 
+                DebugLog.log('RANGE_CHANGED', {axis, minOrMax, value: val});
                 this.draw();
             }
 
@@ -573,7 +806,7 @@
                         if (isHovered || isDragging) {
                             ctx.beginPath();
                             ctx.arc(canvasPoint.x, canvasPoint.y, this.dotRadius + 4, 0, Math.PI * 2);
-                            ctx.fillStyle = color + '40'; // 25% opacity
+                            ctx.fillStyle = color + '40';
                             ctx.fill();
                         }
 
@@ -597,7 +830,6 @@
                 ctx.strokeStyle = '#e0e0e0';
                 ctx.lineWidth = 1;
 
-                // Vertical grid lines (X axis divisions)
                 const xDivisions = 10;
                 for (let i = 0; i <= xDivisions; i++) {
                     const x = this.padding.left + (i / xDivisions) * chartWidth;
@@ -607,7 +839,6 @@
                     ctx.stroke();
                 }
 
-                // Horizontal grid lines (Y axis divisions)
                 const yDivisions = 10;
                 for (let i = 0; i <= yDivisions; i++) {
                     const y = this.padding.top + (i / yDivisions) * chartHeight;
@@ -626,7 +857,6 @@
                 ctx.fillStyle = '#666';
                 ctx.font = '11px -apple-system, BlinkMacSystemFont, sans-serif';
 
-                // X axis labels
                 const xDivisions = 5;
                 for (let i = 0; i <= xDivisions; i++) {
                     const x = this.padding.left + (i / xDivisions) * chartWidth;
@@ -635,7 +865,6 @@
                     ctx.fillText(value.toFixed(0), x, this.canvas.height - this.padding.bottom + 15);
                 }
 
-                // Y axis labels
                 const yDivisions = 5;
                 for (let i = 0; i <= yDivisions; i++) {
                     const y = this.padding.top + (i / yDivisions) * chartHeight;
@@ -646,10 +875,14 @@
             }
         }
 
-        // Initialize
+        // ============================================
+        // INITIALIZATION
+        // ============================================
         let editor = null;
 
         function init() {
+            DebugLog.log('INIT', 'Starting component initialization');
+
             const canvas = document.getElementById('chartCanvas');
             editor = new ChartEditor(canvas);
 
@@ -670,6 +903,8 @@
             // Listen for messages from Streamlit
             window.addEventListener('message', (event) => {
                 if (event.data.type === 'streamlit:render') {
+                    DebugLog.log('STREAMLIT_RENDER', 'Received render message from Streamlit');
+
                     const args = event.data.args;
                     editor.setConfig({
                         lines: args.lines || [],
@@ -693,22 +928,6 @@
 
             setComponentReady();
         }
-
-        // Track if we're dragging to distinguish from click
-        document.getElementById('chartCanvas').addEventListener('mousemove', function(e) {
-            if (editor && editor.draggingPoint && !editor.isDragging) {
-                const rect = this.getBoundingClientRect();
-                const canvasX = e.clientX - rect.left;
-                const canvasY = e.clientY - rect.top;
-                const moved = Math.sqrt(
-                    Math.pow(canvasX - editor.dragStartX, 2) +
-                    Math.pow(canvasY - editor.dragStartY, 2)
-                );
-                if (moved > 5) {
-                    editor.isDragging = true;
-                }
-            }
-        });
 
         // Start when DOM is ready
         if (document.readyState === 'loading') {
