@@ -9,21 +9,29 @@ Tests the v2.0 zoom features:
 """
 
 import streamlit as st
-from chart_editor import chart_editor, get_chart
+import math
+from chart_editor import get_chart, chart_editor
 
 st.set_page_config(page_title="Zoom Demo", layout="wide")
 st.title("Chart Editor - Zoom Demo (v2.0)")
 
-# Initialize demo data
-if "demo_lines" not in st.session_state:
-    # Create some sample data with many points
-    import math
-    points = []
-    for i in range(0, 365, 5):  # One year of data, every 5 days
-        # Simulated price with some randomness
-        base = 100 + 20 * math.sin(i / 30) + 0.05 * i
-        points.append((i, base))
-    st.session_state.demo_lines = [points]
+# Initialize demo data using OOP approach
+demo_chart = get_chart(
+    "demo_main",
+    x_range=(0, 365),
+    y_range=(50, 200),
+    title="Stock Price Prediction",
+    x_label="Days",
+    y_label="Price ($)",
+    width=600,
+    height=400,
+    zoom_enabled=True,
+    read_only=False,
+    initial_lines=[[
+        (i, 100 + 20 * math.sin(i / 30) + 0.05 * i)
+        for i in range(0, 365, 5)
+    ]]
+)
 
 st.markdown("---")
 
@@ -33,21 +41,7 @@ col1, col2 = st.columns(2)
 with col1:
     st.subheader("Editable Chart + Zoom")
     st.caption("Edit points AND zoom. Use Ctrl+drag to pan.")
-
-    lines = chart_editor(
-        lines=st.session_state.demo_lines,
-        x_range=(0, 365),
-        y_range=(50, 200),
-        title="Stock Price Prediction",
-        x_label="Days",
-        y_label="Price ($)",
-        width=600,
-        height=400,
-        zoom_enabled=True,
-        read_only=False,
-        key="editable_zoom"
-    )
-    st.session_state.demo_lines = lines
+    demo_chart.render()
 
     st.info("""
     **Controls:**
@@ -62,8 +56,9 @@ with col2:
     st.subheader("Read-Only Chart + Zoom")
     st.caption("View only. Drag to pan, wheel to zoom.")
 
-    chart_editor(
-        lines=st.session_state.demo_lines,
+    # Read-only view of the same data
+    readonly_chart = get_chart(
+        "demo_readonly",
         x_range=(0, 365),
         y_range=(50, 200),
         title="Stock Price (Read Only)",
@@ -73,8 +68,11 @@ with col2:
         height=400,
         zoom_enabled=True,
         read_only=True,
-        key="readonly_zoom"
+        initial_lines=demo_chart.lines  # Mirror the editable chart's data
     )
+    # Update with latest data from editable chart
+    readonly_chart._state["lines"] = demo_chart.lines
+    readonly_chart.render()
 
     st.info("""
     **Controls:**
@@ -89,11 +87,8 @@ st.subheader("Zoom Buttons Test")
 # Single chart with zoom controls visible
 st.caption("Use the +, -, ⊡ (fit), ↺ (reset) buttons below the chart")
 
-chart_editor(
-    lines=[
-        [(0, 100), (100, 150), (200, 120), (300, 180)],
-        [(0, 80), (100, 90), (200, 110), (300, 100)],
-    ],
+buttons_chart = get_chart(
+    "buttons_test",
     x_range=(0, 400),
     y_range=(0, 250),
     title="Multi-Line with Zoom",
@@ -103,8 +98,12 @@ chart_editor(
     height=450,
     zoom_enabled=True,
     read_only=False,
-    key="buttons_test"
+    initial_lines=[
+        [(0, 100), (100, 150), (200, 120), (300, 180)],
+        [(0, 80), (100, 90), (200, 110), (300, 100)],
+    ]
 )
+buttons_chart.render()
 
 st.markdown("---")
 st.markdown("""
