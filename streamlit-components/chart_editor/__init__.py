@@ -77,6 +77,8 @@ class ChartConfig:
     y_label: str = ""
     width: int = 700
     height: int = 450
+    zoom_enabled: bool = False
+    read_only: bool = False
 
     def to_dict(self) -> dict:
         """Convert to dictionary for passing to chart_editor."""
@@ -90,6 +92,8 @@ class ChartConfig:
             "y_label": self.y_label,
             "width": self.width,
             "height": self.height,
+            "zoom_enabled": self.zoom_enabled,
+            "read_only": self.read_only,
         }
 
 
@@ -155,6 +159,8 @@ def chart_editor(
     min_points: int = 0,
     max_points: Optional[int] = None,
     on_change: Optional[Callable[[Lines], None]] = None,
+    zoom_enabled: bool = False,
+    read_only: bool = False,
 ) -> Lines:
     """
     Create an interactive chart editor component.
@@ -212,6 +218,17 @@ def chart_editor(
     on_change : Callable[[Lines], None], optional
         Callback function called when the chart data changes.
         Receives the new lines data as argument.
+
+    zoom_enabled : bool, default False
+        If True, enables zoom and pan functionality:
+        - Mouse wheel to zoom in/out (centered on cursor)
+        - Ctrl+drag to pan (or just drag in read_only mode)
+        - Zoom control buttons (+, -, fit, reset)
+
+    read_only : bool, default False
+        If True, the chart displays data but doesn't allow editing points.
+        Combined with zoom_enabled, creates a view-only chart with zoom/pan.
+        Useful for output/result charts.
 
     Returns
     -------
@@ -302,6 +319,8 @@ def chart_editor(
         disabled=disabled,
         minPoints=min_points,
         maxPoints=max_points,
+        zoomEnabled=zoom_enabled,
+        readOnly=read_only,
         key=key,
         default=prepared_lines,
     )

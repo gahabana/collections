@@ -73,6 +73,51 @@
             cursor: not-allowed !important;
         }
 
+        #chartCanvas.read-only {
+            cursor: grab;
+        }
+
+        #chartCanvas.read-only.panning {
+            cursor: grabbing;
+        }
+
+        /* Zoom controls */
+        .zoom-controls {
+            display: flex;
+            gap: 8px;
+            margin-top: 10px;
+            align-items: center;
+        }
+
+        .zoom-controls.hidden {
+            display: none;
+        }
+
+        .zoom-btn {
+            padding: 6px 12px;
+            background: #f0f0f0;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: bold;
+            min-width: 36px;
+        }
+
+        .zoom-btn:hover {
+            background: #e0e0e0;
+        }
+
+        .zoom-btn:active {
+            background: #d0d0d0;
+        }
+
+        .zoom-info {
+            font-size: 11px;
+            color: #666;
+            margin-left: 10px;
+        }
+
         .error-message {
             position: absolute;
             top: 50%;
@@ -328,6 +373,13 @@
             <button class="btn-save" id="btnSave">Save</button>
             <button class="btn-cancel" id="btnCancel">Cancel</button>
         </div>
+        <div class="zoom-controls hidden" id="zoomControls">
+            <button class="zoom-btn" id="btnZoomIn" title="Zoom In">+</button>
+            <button class="zoom-btn" id="btnZoomOut" title="Zoom Out">−</button>
+            <button class="zoom-btn" id="btnFitData" title="Fit to Data">⊡</button>
+            <button class="zoom-btn" id="btnResetZoom" title="Reset Zoom">↺</button>
+            <span class="zoom-info" id="zoomInfo">100%</span>
+        </div>
         <div class="line-selector" id="lineSelector"></div>
         <div class="controls">
             <div class="control-group">
@@ -482,6 +534,19 @@
                 this.minPoints = 0;
                 this.maxPoints = null;
 
+                // Zoom/pan state
+                this.zoomEnabled = false;
+                this.readOnly = false;
+                this.originalXRange = [0, 100];
+                this.originalYRange = [0, 1000];
+                this.zoomLevel = 1;
+                this.isPanning = false;
+                this.panStartX = 0;
+                this.panStartY = 0;
+                this.panStartXRange = null;
+                this.panStartYRange = null;
+                this.onZoomCallback = null;
+
                 // Interaction state
                 this.hoveredPoint = null;
                 this.draggingPoint = null;
@@ -492,12 +557,14 @@
                 this.handleMouseDown = this.handleMouseDown.bind(this);
                 this.handleMouseUp = this.handleMouseUp.bind(this);
                 this.handleMouseLeave = this.handleMouseLeave.bind(this);
+                this.handleWheel = this.handleWheel.bind(this);
 
                 // Attach events
                 canvas.addEventListener('mousemove', this.handleMouseMove);
                 canvas.addEventListener('mousedown', this.handleMouseDown);
                 canvas.addEventListener('mouseup', this.handleMouseUp);
                 canvas.addEventListener('mouseleave', this.handleMouseLeave);
+                canvas.addEventListener('wheel', this.handleWheel, { passive: false });
 
                 DebugLog.log('EDITOR_INIT', 'ChartEditor initialized');
             }
@@ -533,12 +600,37 @@
                 this.minPoints = config.minPoints || 0;
                 this.maxPoints = config.maxPoints || null;
 
-                // Update visual state for disabled
+                // Zoom settings
+                this.zoomEnabled = config.zoomEnabled || false;
+                this.readOnly = config.readOnly || false;
+
+                // Store original ranges for reset (only on first config or explicit reset)
+                if (!this._originalRangesSet) {
+                    this.originalXRange = [...this.xRange];
+                    this.originalYRange = [...this.yRange];
+                    this._originalRangesSet = true;
+                }
+
+                // Update visual state for disabled/readOnly
                 if (this.disabled) {
                     this.canvas.style.cursor = 'default';
                     this.canvas.classList.add('disabled');
                 } else {
                     this.canvas.classList.remove('disabled');
+                }
+
+                if (this.readOnly) {
+                    this.canvas.classList.add('read-only');
+                } else {
+                    this.canvas.classList.remove('read-only');
+                }
+
+                // Show/hide zoom controls
+                const zoomControls = document.getElementById('zoomControls');
+                if (this.zoomEnabled) {
+                    zoomControls.classList.remove('hidden');
+                } else {
+                    zoomControls.classList.add('hidden');
                 }
 
                 // Update UI elements
@@ -726,6 +818,12 @@
                 const canvasX = e.clientX - rect.left;
                 const canvasY = e.clientY - rect.top;
 
+                // Handle panning
+                if (this.isPanning) {
+                    this.updatePan(canvasX, canvasY);
+                    return;
+                }
+
                 if (this.draggingPoint && !this.isDragging) {
                     const moved = Math.sqrt(
                         Math.pow(canvasX - this.dragStartX, 2) +
@@ -784,6 +882,28 @@
                 const rect = this.canvas.getBoundingClientRect();
                 const canvasX = e.clientX - rect.left;
                 const canvasY = e.clientY - rect.top;
+
+                // Check for pan mode:
+                // - In read-only mode: any drag pans
+                // - In edit mode with zoom: Ctrl+drag or middle mouse pans
+                const shouldPan = this.zoomEnabled && this.isInChartArea(canvasX, canvasY) && (
+                    this.readOnly ||
+                    e.ctrlKey ||
+                    e.metaKey ||
+                    e.button === 1 // Middle mouse button
+                );
+
+                if (shouldPan) {
+                    e.preventDefault();
+                    this.startPan(canvasX, canvasY);
+                    DebugLog.log('PAN_START', { x: canvasX, y: canvasY });
+                    return;
+                }
+
+                // Read-only mode: no editing interactions
+                if (this.readOnly) {
+                    return;
+                }
 
                 const point = this.findPointAt(canvasX, canvasY);
 
@@ -848,6 +968,16 @@
             }
 
             handleMouseUp(e) {
+                // End panning
+                if (this.isPanning) {
+                    this.endPan();
+                    DebugLog.log('PAN_END', {
+                        xRange: this.xRange.map(v => v.toFixed(2)),
+                        yRange: this.yRange.map(v => v.toFixed(2))
+                    });
+                    return;
+                }
+
                 if (this.draggingPoint) {
                     const rect = this.canvas.getBoundingClientRect();
                     const canvasX = e.clientX - rect.left;
@@ -912,6 +1042,11 @@
             }
 
             handleMouseLeave() {
+                // End panning on mouse leave
+                if (this.isPanning) {
+                    this.endPan();
+                }
+
                 if (this.isDragging && this.draggingPoint && this.dragOriginalPos) {
                     const line = this.lines[this.draggingPoint.lineIndex];
                     line[this.draggingPoint.pointIndex] = {...this.dragOriginalPos};
@@ -1186,6 +1321,283 @@
                     ctx.fillText(value.toFixed(0), this.padding.left - 5, y + 4);
                 }
             }
+
+            // ============================================
+            // ZOOM / PAN METHODS
+            // ============================================
+
+            handleWheel(e) {
+                if (!this.zoomEnabled) return;
+
+                e.preventDefault();
+
+                const rect = this.canvas.getBoundingClientRect();
+                const canvasX = e.clientX - rect.left;
+                const canvasY = e.clientY - rect.top;
+
+                // Only zoom if cursor is in chart area
+                if (!this.isInChartArea(canvasX, canvasY)) return;
+
+                // Get data coordinates at cursor position (zoom center)
+                const dataPos = this.canvasToData(canvasX, canvasY);
+
+                // Determine zoom direction and factor
+                const zoomFactor = e.deltaY < 0 ? 0.9 : 1.1; // Scroll up = zoom in
+
+                // Calculate new ranges centered on cursor position
+                const xRangeSize = this.xRange[1] - this.xRange[0];
+                const yRangeSize = this.yRange[1] - this.yRange[0];
+
+                const newXRangeSize = xRangeSize * zoomFactor;
+                const newYRangeSize = yRangeSize * zoomFactor;
+
+                // Calculate cursor position as fraction of current range
+                const xFraction = (dataPos.x - this.xRange[0]) / xRangeSize;
+                const yFraction = (dataPos.y - this.yRange[0]) / yRangeSize;
+
+                // New range keeps cursor at same visual position
+                const newXMin = dataPos.x - xFraction * newXRangeSize;
+                const newXMax = newXMin + newXRangeSize;
+                const newYMin = dataPos.y - yFraction * newYRangeSize;
+                const newYMax = newYMin + newYRangeSize;
+
+                // Apply zoom with limits
+                this.setZoomRange(newXMin, newXMax, newYMin, newYMax);
+            }
+
+            setZoomRange(xMin, xMax, yMin, yMax, notify = true) {
+                // Enforce minimum zoom (don't zoom in too far)
+                const minXRange = (this.originalXRange[1] - this.originalXRange[0]) * 0.01;
+                const minYRange = (this.originalYRange[1] - this.originalYRange[0]) * 0.01;
+
+                if (xMax - xMin < minXRange) {
+                    const center = (xMax + xMin) / 2;
+                    xMin = center - minXRange / 2;
+                    xMax = center + minXRange / 2;
+                }
+
+                if (yMax - yMin < minYRange) {
+                    const center = (yMax + yMin) / 2;
+                    yMin = center - minYRange / 2;
+                    yMax = center + minYRange / 2;
+                }
+
+                // Enforce maximum zoom out (don't exceed 5x original range)
+                const maxXRange = (this.originalXRange[1] - this.originalXRange[0]) * 5;
+                const maxYRange = (this.originalYRange[1] - this.originalYRange[0]) * 5;
+
+                if (xMax - xMin > maxXRange) {
+                    const center = (xMax + xMin) / 2;
+                    xMin = center - maxXRange / 2;
+                    xMax = center + maxXRange / 2;
+                }
+
+                if (yMax - yMin > maxYRange) {
+                    const center = (yMax + yMin) / 2;
+                    yMin = center - maxYRange / 2;
+                    yMax = center + maxYRange / 2;
+                }
+
+                this.xRange = [xMin, xMax];
+                this.yRange = [yMin, yMax];
+
+                // Calculate zoom level (based on X axis)
+                const originalXSize = this.originalXRange[1] - this.originalXRange[0];
+                const currentXSize = xMax - xMin;
+                this.zoomLevel = originalXSize / currentXSize;
+
+                // Update UI
+                this.updateZoomInfo();
+                this.updateRangeInputs();
+                this.draw();
+
+                // Notify callback
+                if (notify && this.onZoomCallback) {
+                    this.onZoomCallback({
+                        xRange: [...this.xRange],
+                        yRange: [...this.yRange],
+                        zoomLevel: this.zoomLevel
+                    });
+                }
+
+                // Send zoom state to Python
+                if (notify) {
+                    this.sendZoomState();
+                }
+
+                DebugLog.log('ZOOM_CHANGED', {
+                    xRange: [xMin.toFixed(2), xMax.toFixed(2)],
+                    yRange: [yMin.toFixed(2), yMax.toFixed(2)],
+                    zoomLevel: this.zoomLevel.toFixed(2)
+                });
+            }
+
+            sendZoomState() {
+                sendMessageToStreamlit("streamlit:setComponentValue", {
+                    value: {
+                        type: 'zoom',
+                        xRange: this.xRange,
+                        yRange: this.yRange,
+                        zoomLevel: this.zoomLevel
+                    }
+                });
+            }
+
+            updateZoomInfo() {
+                const zoomInfo = document.getElementById('zoomInfo');
+                if (zoomInfo) {
+                    zoomInfo.textContent = `${Math.round(this.zoomLevel * 100)}%`;
+                }
+            }
+
+            updateRangeInputs() {
+                document.getElementById('xMin').value = this.xRange[0].toFixed(2);
+                document.getElementById('xMax').value = this.xRange[1].toFixed(2);
+                document.getElementById('yMin').value = this.yRange[0].toFixed(2);
+                document.getElementById('yMax').value = this.yRange[1].toFixed(2);
+            }
+
+            zoomIn() {
+                if (!this.zoomEnabled) return;
+
+                const xCenter = (this.xRange[0] + this.xRange[1]) / 2;
+                const yCenter = (this.yRange[0] + this.yRange[1]) / 2;
+                const xHalf = (this.xRange[1] - this.xRange[0]) / 2 * 0.8;
+                const yHalf = (this.yRange[1] - this.yRange[0]) / 2 * 0.8;
+
+                this.setZoomRange(
+                    xCenter - xHalf,
+                    xCenter + xHalf,
+                    yCenter - yHalf,
+                    yCenter + yHalf
+                );
+            }
+
+            zoomOut() {
+                if (!this.zoomEnabled) return;
+
+                const xCenter = (this.xRange[0] + this.xRange[1]) / 2;
+                const yCenter = (this.yRange[0] + this.yRange[1]) / 2;
+                const xHalf = (this.xRange[1] - this.xRange[0]) / 2 * 1.25;
+                const yHalf = (this.yRange[1] - this.yRange[0]) / 2 * 1.25;
+
+                this.setZoomRange(
+                    xCenter - xHalf,
+                    xCenter + xHalf,
+                    yCenter - yHalf,
+                    yCenter + yHalf
+                );
+            }
+
+            resetZoom() {
+                if (!this.zoomEnabled) return;
+
+                this.setZoomRange(
+                    this.originalXRange[0],
+                    this.originalXRange[1],
+                    this.originalYRange[0],
+                    this.originalYRange[1]
+                );
+
+                DebugLog.log('ZOOM_RESET', 'Reset to original range');
+            }
+
+            fitToData() {
+                if (!this.zoomEnabled) return;
+
+                // Find data bounds
+                let minX = Infinity, maxX = -Infinity;
+                let minY = Infinity, maxY = -Infinity;
+
+                this.lines.forEach(line => {
+                    line.forEach(point => {
+                        minX = Math.min(minX, point.x);
+                        maxX = Math.max(maxX, point.x);
+                        minY = Math.min(minY, point.y);
+                        maxY = Math.max(maxY, point.y);
+                    });
+                });
+
+                if (minX === Infinity) {
+                    // No data, reset to original
+                    this.resetZoom();
+                    return;
+                }
+
+                // Add 10% padding
+                const xPadding = (maxX - minX) * 0.1 || 1;
+                const yPadding = (maxY - minY) * 0.1 || 1;
+
+                this.setZoomRange(
+                    minX - xPadding,
+                    maxX + xPadding,
+                    minY - yPadding,
+                    maxY + yPadding
+                );
+
+                DebugLog.log('FIT_TO_DATA', {
+                    xRange: [minX - xPadding, maxX + xPadding],
+                    yRange: [minY - yPadding, maxY + yPadding]
+                });
+            }
+
+            // Programmatic zoom to specific range (for external control / sync)
+            zoomTo(xMin, xMax, yMin, yMax, notify = true) {
+                this.setZoomRange(xMin, xMax, yMin, yMax, notify);
+            }
+
+            // Start panning
+            startPan(canvasX, canvasY) {
+                this.isPanning = true;
+                this.panStartX = canvasX;
+                this.panStartY = canvasY;
+                this.panStartXRange = [...this.xRange];
+                this.panStartYRange = [...this.yRange];
+                this.canvas.classList.add('panning');
+            }
+
+            // Update pan
+            updatePan(canvasX, canvasY) {
+                if (!this.isPanning) return;
+
+                const chartWidth = this.canvas.width - this.padding.left - this.padding.right;
+                const chartHeight = this.canvas.height - this.padding.top - this.padding.bottom;
+
+                // Calculate how much to pan in data units
+                const dx = canvasX - this.panStartX;
+                const dy = canvasY - this.panStartY;
+
+                const xRangeSize = this.panStartXRange[1] - this.panStartXRange[0];
+                const yRangeSize = this.panStartYRange[1] - this.panStartYRange[0];
+
+                const dataXShift = -(dx / chartWidth) * xRangeSize;
+                const dataYShift = (dy / chartHeight) * yRangeSize;
+
+                this.setZoomRange(
+                    this.panStartXRange[0] + dataXShift,
+                    this.panStartXRange[1] + dataXShift,
+                    this.panStartYRange[0] + dataYShift,
+                    this.panStartYRange[1] + dataYShift,
+                    false // Don't notify during drag
+                );
+            }
+
+            // End panning
+            endPan() {
+                if (this.isPanning) {
+                    this.isPanning = false;
+                    this.canvas.classList.remove('panning');
+                    // Notify on pan end
+                    if (this.onZoomCallback) {
+                        this.onZoomCallback({
+                            xRange: [...this.xRange],
+                            yRange: [...this.yRange],
+                            zoomLevel: this.zoomLevel
+                        });
+                    }
+                    this.sendZoomState();
+                }
+            }
         }
 
         // ============================================
@@ -1212,6 +1624,20 @@
             // Cancel button
             document.getElementById('btnCancel').addEventListener('click', () => {
                 editor.cancelChanges();
+            });
+
+            // Zoom buttons
+            document.getElementById('btnZoomIn').addEventListener('click', () => {
+                editor.zoomIn();
+            });
+            document.getElementById('btnZoomOut').addEventListener('click', () => {
+                editor.zoomOut();
+            });
+            document.getElementById('btnFitData').addEventListener('click', () => {
+                editor.fitToData();
+            });
+            document.getElementById('btnResetZoom').addEventListener('click', () => {
+                editor.resetZoom();
             });
 
             // Range input changes
@@ -1244,7 +1670,12 @@
                         xLabel: args.xLabel || '',
                         yLabel: args.yLabel || '',
                         width: args.width || 700,
-                        height: args.height || 450
+                        height: args.height || 450,
+                        disabled: args.disabled || false,
+                        minPoints: args.minPoints || 0,
+                        maxPoints: args.maxPoints || null,
+                        zoomEnabled: args.zoomEnabled || false,
+                        readOnly: args.readOnly || false
                     });
 
                     setTimeout(() => {

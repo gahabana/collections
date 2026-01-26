@@ -59,6 +59,8 @@ class ChartEditor:
         max_points: Optional[int] = None,
         initial_lines: Optional[Lines] = None,
         on_change: Optional[Callable[[Lines], None]] = None,
+        zoom_enabled: bool = False,
+        read_only: bool = False,
     ):
         """
         Initialize a ChartEditor instance.
@@ -93,6 +95,8 @@ class ChartEditor:
         self.min_points = min_points
         self.max_points = max_points
         self.on_change = on_change
+        self.zoom_enabled = zoom_enabled
+        self.read_only = read_only
 
         # Initialize state if needed
         if self._state_key not in st.session_state:
@@ -164,6 +168,8 @@ class ChartEditor:
             disabled=self.disabled,
             min_points=self.min_points,
             max_points=self.max_points,
+            zoom_enabled=self.zoom_enabled,
+            read_only=self.read_only,
         )
 
         # Check if data changed
