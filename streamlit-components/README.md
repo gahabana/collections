@@ -2,7 +2,7 @@
 
 An interactive 2D chart editor for Streamlit that allows users to create and edit multi-line graphs with drag-and-drop functionality.
 
-**Version**: 0.1.0
+**Version**: 1.0.0
 
 ## Features
 
