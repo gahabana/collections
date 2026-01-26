@@ -103,6 +103,261 @@ lines = chart_editor(
 
 ---
 
+## Object-Oriented API
+
+The OOP approach provides encapsulated state management, which is especially useful when working with **tabs** or multiple charts that need independent state.
+
+### `ChartEditor` Class
+
+```python
+from chart_editor import ChartEditor, get_chart
+
+# Create directly
+chart = ChartEditor(
+    key="my_chart",
+    x_range=(0, 100),
+    y_range=(0, 1000),
+    colors=None,
+    grid_snap=None,
+    title="",
+    x_label="",
+    y_label="",
+    width=700,
+    height=450,
+    disabled=False,
+    min_points=0,
+    max_points=None,
+    initial_lines=None,
+    on_change=None,
+)
+
+# Or use helper (recommended)
+chart = get_chart("my_chart", title="Temperature", x_range=(0, 60))
+```
+
+#### Properties
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `lines` | `Lines` | Current saved line data (read/write) |
+| `version` | `int` | State version, increments on each save |
+| `line_count` | `int` | Number of lines in the chart |
+| `total_points` | `int` | Total points across all lines |
+| `has_pending_changes` | `bool` | Whether there are unapplied UI changes |
+
+#### Methods
+
+| Method | Description |
+|--------|-------------|
+| `render()` | Display the chart editor, returns current lines |
+| `add_line(points)` | Add a new line, returns index |
+| `remove_line(index)` | Remove line by index |
+| `add_horizontal_line(y)` | Add horizontal line at Y value |
+| `add_vertical_line(x)` | Add vertical line at X value |
+| `get_line(index)` | Get specific line by index |
+| `set_line(index, points)` | Replace points for a line |
+| `clear()` | Remove all lines |
+| `reset(initial_lines)` | Reset to initial state |
+| `save_to_file(path)` | Save chart data to JSON file |
+| `load_from_file(path)` | Load chart data from JSON file |
+| `to_dict()` | Export state as dictionary |
+
+### `get_chart()` Helper
+
+Returns an existing ChartEditor instance or creates a new one. Recommended for most use cases.
+
+```python
+from chart_editor import get_chart
+
+# Always returns the same instance for the same key
+chart = get_chart("my_chart", title="Temperature", x_range=(0, 60))
+chart.render()
+```
+
+---
+
+## Functional vs OOP: When to Use Which
+
+| Scenario | Recommended | Why |
+|----------|-------------|-----|
+| Single chart, simple page | Functional | Less boilerplate |
+| Multiple charts in **tabs** | **OOP** | Prevents state loss on tab switch |
+| Programmatic manipulation | **OOP** | Methods like `add_line()`, `clear()` |
+| File persistence needed | **OOP** | Built-in `save_to_file()` / `load_from_file()` |
+| Change callbacks | Either | Both support `on_change` |
+
+### Why OOP Works Better with Tabs
+
+When using tabs with the functional approach, switching tabs causes Streamlit to rerun. The inactive tab's `chart_editor()` returns stale/default data, which overwrites your saved state.
+
+The OOP `ChartEditor.render()` method includes a check: `if result != self.lines` — it only updates state when data actually changed, preventing the overwrite.
+
+---
+
+## Comparison Examples
+
+### Example 1: Basic Single Chart
+
+**Functional approach:**
+```python
+import streamlit as st
+from chart_editor import chart_editor
+
+if "data" not in st.session_state:
+    st.session_state.data = [[(0, 500), (100, 500)]]
+
+lines = chart_editor(
+    lines=st.session_state.data,
+    title="My Chart",
+    key="chart1"
+)
+
+st.session_state.data = lines
+st.write(f"Points: {sum(len(line) for line in lines)}")
+```
+
+**OOP approach:**
+```python
+import streamlit as st
+from chart_editor import get_chart
+
+chart = get_chart(
+    "chart1",
+    title="My Chart",
+    initial_lines=[[(0, 500), (100, 500)]]
+)
+
+chart.render()
+st.write(f"Points: {chart.total_points}")
+```
+
+Both work identically for a single chart. OOP is slightly more concise.
+
+---
+
+### Example 2: Multiple Charts in Tabs (OOP Required)
+
+**Functional approach (BROKEN - loses state on tab switch):**
+```python
+import streamlit as st
+from chart_editor import chart_editor
+
+# Initialize state
+if "temp_data" not in st.session_state:
+    st.session_state.temp_data = [[(0, 100), (60, 100)]]
+if "pressure_data" not in st.session_state:
+    st.session_state.pressure_data = [[(0, 5), (60, 5)]]
+
+tab1, tab2 = st.tabs(["Temperature", "Pressure"])
+
+with tab1:
+    lines = chart_editor(
+        lines=st.session_state.temp_data,
+        title="Temperature",
+        key="temp_chart"
+    )
+    st.session_state.temp_data = lines  # BUG: Overwrites with stale data!
+
+with tab2:
+    lines = chart_editor(
+        lines=st.session_state.pressure_data,
+        title="Pressure",
+        key="pressure_chart"
+    )
+    st.session_state.pressure_data = lines  # BUG: Overwrites with stale data!
+```
+
+**OOP approach (WORKS correctly):**
+```python
+import streamlit as st
+from chart_editor import get_chart
+
+# Create chart objects - state is managed internally
+temp_chart = get_chart(
+    "temp_chart",
+    title="Temperature",
+    initial_lines=[[(0, 100), (60, 100)]]
+)
+pressure_chart = get_chart(
+    "pressure_chart",
+    title="Pressure",
+    initial_lines=[[(0, 5), (60, 5)]]
+)
+
+tab1, tab2 = st.tabs(["Temperature", "Pressure"])
+
+with tab1:
+    temp_chart.render()  # Only updates when data actually changes
+    st.caption(f"Lines: {temp_chart.line_count}")
+
+with tab2:
+    pressure_chart.render()  # Safe - won't overwrite temp_chart
+    st.caption(f"Lines: {pressure_chart.line_count}")
+```
+
+---
+
+### Example 3: Programmatic Manipulation with Buttons
+
+**Functional approach:**
+```python
+import streamlit as st
+from chart_editor import chart_editor, create_horizontal_line
+
+if "data" not in st.session_state:
+    st.session_state.data = [[(0, 500), (100, 500)]]
+
+lines = chart_editor(lines=st.session_state.data, key="chart1")
+st.session_state.data = lines
+
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    if st.button("Add Line"):
+        st.session_state.data.append(create_horizontal_line(300, (0, 100)))
+        st.rerun()
+
+with col2:
+    if st.button("Clear All"):
+        st.session_state.data = []
+        st.rerun()
+
+with col3:
+    if st.button("Reset"):
+        st.session_state.data = [[(0, 500), (100, 500)]]
+        st.rerun()
+```
+
+**OOP approach:**
+```python
+import streamlit as st
+from chart_editor import get_chart
+
+chart = get_chart("chart1", initial_lines=[[(0, 500), (100, 500)]])
+chart.render()
+
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    if st.button("Add Line"):
+        chart.add_horizontal_line(300)
+        st.rerun()
+
+with col2:
+    if st.button("Clear All"):
+        chart.clear()
+        st.rerun()
+
+with col3:
+    if st.button("Reset"):
+        chart.reset([[(0, 500), (100, 500)]])
+        st.rerun()
+```
+
+OOP provides cleaner methods for manipulation instead of manual list operations.
+
+---
+
 ### Helper Functions
 
 #### `create_horizontal_line()`
@@ -367,6 +622,9 @@ streamlit run demo.py
 
 # Multi-chart demo (3 instances: small, medium, large)
 streamlit run demo_multi.py
+
+# OOP demo with tabs (demonstrates state persistence)
+streamlit run demo_oop.py
 ```
 
 ---
