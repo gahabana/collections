@@ -328,6 +328,9 @@ def chart_editor(
     # Convert back to list of tuples
     if component_value is None:
         result = [list(map(tuple, line)) for line in prepared_lines]
+    elif isinstance(component_value, dict) and component_value.get('type') == 'zoom':
+        # Zoom state returned, not lines data - keep existing lines
+        result = [list(map(tuple, line)) for line in prepared_lines]
     else:
         result = []
         for line in component_value:
@@ -338,12 +341,14 @@ def chart_editor(
             else:
                 result.append([])
 
-    # Call on_change callback if data changed
+    # Call on_change callback if data changed (not for zoom events)
     if on_change is not None and component_value is not None:
-        # Check if data actually changed
-        old_data = [list(map(tuple, line)) for line in prepared_lines]
-        if result != old_data:
-            on_change(result)
+        # Skip zoom events
+        if not (isinstance(component_value, dict) and component_value.get('type') == 'zoom'):
+            # Check if data actually changed
+            old_data = [list(map(tuple, line)) for line in prepared_lines]
+            if result != old_data:
+                on_change(result)
 
     return result
 
