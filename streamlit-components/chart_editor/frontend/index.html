@@ -81,12 +81,9 @@
             cursor: grabbing;
         }
 
-        /* Zoom controls */
+        /* Zoom controls - hidden by default, range selector provides zoom */
         .zoom-controls {
-            display: flex;
-            gap: 8px;
-            margin-top: 10px;
-            align-items: center;
+            display: none;
         }
 
         .zoom-controls.hidden {
@@ -121,11 +118,13 @@
         /* Range Selector (X-axis zoom brush) */
         .range-selector {
             position: relative;
-            height: 40px;
-            margin-top: 8px;
-            background: #f5f5f5;
-            border: 1px solid #ddd;
-            border-radius: 4px;
+            height: 24px;
+            margin-top: 4px;
+            margin-left: 50px;
+            margin-right: 20px;
+            background: linear-gradient(to bottom, #f8f8f8, #eee);
+            border: 1px solid #ccc;
+            border-radius: 3px;
             cursor: default;
             user-select: none;
         }
@@ -136,22 +135,28 @@
 
         .range-selector-track {
             position: absolute;
-            top: 8px;
-            left: 10px;
-            right: 10px;
-            height: 24px;
-            background: #e0e0e0;
+            top: 4px;
+            left: 0;
+            right: 0;
+            height: 16px;
+            background: #ddd;
             border-radius: 2px;
+            overflow: hidden;
         }
 
         .range-selector-viewport {
             position: absolute;
             top: 0;
             height: 100%;
-            background: rgba(78, 205, 196, 0.3);
-            border: 2px solid #4ECDC4;
-            border-radius: 2px;
+            background: linear-gradient(to bottom, rgba(78, 205, 196, 0.4), rgba(78, 205, 196, 0.2));
+            border-left: 2px solid #4ECDC4;
+            border-right: 2px solid #4ECDC4;
             cursor: grab;
+            min-width: 20px;
+        }
+
+        .range-selector-viewport:hover {
+            background: linear-gradient(to bottom, rgba(78, 205, 196, 0.5), rgba(78, 205, 196, 0.3));
         }
 
         .range-selector-viewport:active {
@@ -160,45 +165,42 @@
 
         .range-selector-handle {
             position: absolute;
-            top: -2px;
-            width: 12px;
-            height: calc(100% + 4px);
+            top: 0;
+            width: 8px;
+            height: 100%;
             background: #4ECDC4;
-            border-radius: 3px;
             cursor: ew-resize;
+            transition: background 0.15s;
         }
 
         .range-selector-handle:hover {
             background: #3dbdb5;
         }
 
+        .range-selector-handle::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 2px;
+            height: 8px;
+            background: rgba(255,255,255,0.7);
+            border-radius: 1px;
+        }
+
         .range-selector-handle.left {
-            left: -6px;
+            left: -4px;
+            border-radius: 2px 0 0 2px;
         }
 
         .range-selector-handle.right {
-            right: -6px;
+            right: -4px;
+            border-radius: 0 2px 2px 0;
         }
 
         .range-selector-label {
-            position: absolute;
-            bottom: 2px;
-            font-size: 10px;
-            color: #666;
-            pointer-events: none;
-        }
-
-        .range-selector-label.left {
-            left: 10px;
-        }
-
-        .range-selector-label.right {
-            right: 10px;
-        }
-
-        .range-selector-label.center {
-            left: 50%;
-            transform: translateX(-50%);
+            display: none;
         }
 
         .error-message {
@@ -1482,9 +1484,9 @@
             }
 
             setZoomRange(xMin, xMax, yMin, yMax, notify = true) {
-                // Enforce minimum zoom (don't zoom in too far)
-                const minXRange = (this.originalXRange[1] - this.originalXRange[0]) * 0.01;
-                const minYRange = (this.originalYRange[1] - this.originalYRange[0]) * 0.01;
+                // Enforce minimum zoom (don't zoom in too far - minimum 5% of original range)
+                const minXRange = (this.originalXRange[1] - this.originalXRange[0]) * 0.05;
+                const minYRange = (this.originalYRange[1] - this.originalYRange[0]) * 0.05;
 
                 if (xMax - xMin < minXRange) {
                     const center = (xMax + xMin) / 2;
@@ -1498,20 +1500,41 @@
                     yMax = center + minYRange / 2;
                 }
 
-                // Enforce maximum zoom out (don't exceed 5x original range)
-                const maxXRange = (this.originalXRange[1] - this.originalXRange[0]) * 5;
-                const maxYRange = (this.originalYRange[1] - this.originalYRange[0]) * 5;
+                // Enforce maximum zoom out (don't exceed original range)
+                const origXSize = this.originalXRange[1] - this.originalXRange[0];
+                const origYSize = this.originalYRange[1] - this.originalYRange[0];
 
-                if (xMax - xMin > maxXRange) {
-                    const center = (xMax + xMin) / 2;
-                    xMin = center - maxXRange / 2;
-                    xMax = center + maxXRange / 2;
+                if (xMax - xMin > origXSize) {
+                    xMin = this.originalXRange[0];
+                    xMax = this.originalXRange[1];
                 }
 
-                if (yMax - yMin > maxYRange) {
-                    const center = (yMax + yMin) / 2;
-                    yMin = center - maxYRange / 2;
-                    yMax = center + maxYRange / 2;
+                if (yMax - yMin > origYSize) {
+                    yMin = this.originalYRange[0];
+                    yMax = this.originalYRange[1];
+                }
+
+                // Clamp to stay within original bounds (no panning outside data range)
+                if (xMin < this.originalXRange[0]) {
+                    const shift = this.originalXRange[0] - xMin;
+                    xMin = this.originalXRange[0];
+                    xMax = Math.min(xMax + shift, this.originalXRange[1]);
+                }
+                if (xMax > this.originalXRange[1]) {
+                    const shift = xMax - this.originalXRange[1];
+                    xMax = this.originalXRange[1];
+                    xMin = Math.max(xMin - shift, this.originalXRange[0]);
+                }
+
+                if (yMin < this.originalYRange[0]) {
+                    const shift = this.originalYRange[0] - yMin;
+                    yMin = this.originalYRange[0];
+                    yMax = Math.min(yMax + shift, this.originalYRange[1]);
+                }
+                if (yMax > this.originalYRange[1]) {
+                    const shift = yMax - this.originalYRange[1];
+                    yMax = this.originalYRange[1];
+                    yMin = Math.max(yMin - shift, this.originalYRange[0]);
                 }
 
                 this.xRange = [xMin, xMax];
