@@ -161,6 +161,7 @@ def chart_editor(
     on_change: Optional[Callable[[Lines], None]] = None,
     zoom_enabled: bool = False,
     read_only: bool = False,
+    on_zoom: Optional[Callable[[Tuple[float, float], Tuple[float, float]], None]] = None,
 ) -> Lines:
     """
     Create an interactive chart editor component.
@@ -229,6 +230,11 @@ def chart_editor(
         If True, the chart displays data but doesn't allow editing points.
         Combined with zoom_enabled, creates a view-only chart with zoom/pan.
         Useful for output/result charts.
+
+    on_zoom : Callable[[Tuple[float, float], Tuple[float, float]], None], optional
+        Callback function called when the chart zoom changes.
+        Receives (x_range, y_range) as arguments.
+        Useful for synchronizing zoom across multiple charts.
 
     Returns
     -------
@@ -331,6 +337,11 @@ def chart_editor(
     elif isinstance(component_value, dict) and component_value.get('type') == 'zoom':
         # Zoom state returned, not lines data - keep existing lines
         result = [list(map(tuple, line)) for line in prepared_lines]
+        # Call on_zoom callback if provided
+        if on_zoom is not None:
+            zoom_x_range = tuple(component_value.get('xRange', x_range))
+            zoom_y_range = tuple(component_value.get('yRange', y_range))
+            on_zoom(zoom_x_range, zoom_y_range)
     else:
         result = []
         for line in component_value:
