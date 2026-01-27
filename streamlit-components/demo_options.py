@@ -7,7 +7,7 @@ Simulates the user's options trading use case with:
 - Risk-free rate input (editable)
 - Stock price prediction input (editable)
 
-All charts share the same X-axis (days) controlled by a master slider.
+All charts have X-axis range selectors for synchronized zoom.
 """
 
 import streamlit as st
@@ -20,28 +20,16 @@ st.set_page_config(page_title="Options Analyzer", layout="wide")
 # CONFIGURATION
 # ============================================
 DAYS = 180  # 6 months
-X_RANGE_FULL = (0, DAYS)
-
-# ============================================
-# MASTER X-AXIS RANGE (shared by all charts)
-# ============================================
-if "x_range_min" not in st.session_state:
-    st.session_state.x_range_min = 0
-if "x_range_max" not in st.session_state:
-    st.session_state.x_range_max = DAYS
+X_RANGE = (0, DAYS)
 
 # ============================================
 # INITIALIZE CHARTS (OOP approach)
 # ============================================
 
-def get_shared_x_range():
-    """Get the current shared X range from session state."""
-    return (st.session_state.x_range_min, st.session_state.x_range_max)
-
 # IV Curve input
 iv_chart = get_chart(
     "iv_curve",
-    x_range=X_RANGE_FULL,  # Use full range, zoom handled by x_range parameter
+    x_range=X_RANGE,
     y_range=(10, 60),
     colors=["#e74c3c"],
     title="IV Curve",
@@ -49,7 +37,7 @@ iv_chart = get_chart(
     y_label="IV %",
     width=400,
     height=280,
-    zoom_enabled=False,  # Controlled by master slider instead
+    zoom_enabled=True,  # Enable range selector
     read_only=False,
     initial_lines=[[(0, 30), (30, 32), (60, 28), (90, 27), (120, 26), (150, 25), (180, 25)]]
 )
@@ -57,7 +45,7 @@ iv_chart = get_chart(
 # Rate Curve input
 rate_chart = get_chart(
     "rate_curve",
-    x_range=X_RANGE_FULL,
+    x_range=X_RANGE,
     y_range=(0, 10),
     colors=["#3498db"],
     title="Rate Curve",
@@ -65,7 +53,7 @@ rate_chart = get_chart(
     y_label="Rate %",
     width=400,
     height=280,
-    zoom_enabled=False,
+    zoom_enabled=True,
     read_only=False,
     initial_lines=[[(0, 5.0), (90, 5.0), (180, 5.0)]]
 )
@@ -73,7 +61,7 @@ rate_chart = get_chart(
 # Price Prediction input
 price_chart = get_chart(
     "price_curve",
-    x_range=X_RANGE_FULL,
+    x_range=X_RANGE,
     y_range=(80, 140),
     colors=["#9b59b6"],
     title="Price Path",
@@ -81,7 +69,7 @@ price_chart = get_chart(
     y_label="Price $",
     width=400,
     height=280,
-    zoom_enabled=False,
+    zoom_enabled=True,
     read_only=False,
     initial_lines=[[(0, 100), (30, 102), (60, 105), (90, 108), (120, 110), (150, 112), (180, 115)]]
 )
@@ -89,7 +77,7 @@ price_chart = get_chart(
 # Main P/L chart (read-only)
 pl_chart = get_chart(
     "main_pl",
-    x_range=X_RANGE_FULL,
+    x_range=X_RANGE,
     y_range=(-500, 500),
     colors=["#2ecc71"],
     title="Long Call P/L",
@@ -97,7 +85,7 @@ pl_chart = get_chart(
     y_label="P/L ($)",
     width=1000,
     height=350,
-    zoom_enabled=False,
+    zoom_enabled=True,
     read_only=True,
     initial_lines=[[]]
 )
@@ -110,29 +98,25 @@ def calculate_pl_curve(iv_lines, rate_lines, price_lines):
     """
     pl_points = []
 
-    # Get price at each day (interpolate if needed)
     price_map = {int(p[0]): p[1] for p in price_lines[0]} if price_lines and price_lines[0] else {}
     iv_map = {int(p[0]): p[1] for p in iv_lines[0]} if iv_lines and iv_lines[0] else {}
 
     base_price = price_map.get(0, 100)
-    strike = base_price  # ATM option
+    strike = base_price
     initial_value = None
 
     for day in range(0, DAYS + 1, 5):
-        # Simple approximation: P/L based on price movement and IV
         current_price = price_map.get(day, base_price)
         current_iv = iv_map.get(day, 30) / 100
 
-        # Simulated long call P/L
         intrinsic = max(0, current_price - strike)
         time_value = current_iv * math.sqrt((DAYS - day) / 365) * current_price * 0.4
         option_value = intrinsic + time_value
 
-        # P/L relative to initial value
         if initial_value is None:
             initial_value = option_value
 
-        pl = (option_value - initial_value) * 100  # Scale for visibility
+        pl = (option_value - initial_value) * 100
         pl_points.append((day, pl))
 
     return [pl_points]
@@ -141,58 +125,8 @@ def calculate_pl_curve(iv_lines, rate_lines, price_lines):
 # ============================================
 # HEADER
 # ============================================
-st.title("Options Strategy Analyzer (v2.0 Prototype)")
-st.caption("Edit input curves, see calculated P/L. Use the X-axis slider to zoom all charts together.")
-
-# ============================================
-# MASTER X-AXIS ZOOM CONTROL
-# ============================================
-st.markdown("### X-Axis Range (Days)")
-
-zoom_col1, zoom_col2, zoom_col3 = st.columns([3, 3, 2])
-
-with zoom_col1:
-    x_min = st.slider(
-        "Start Day",
-        min_value=0,
-        max_value=DAYS - 10,
-        value=st.session_state.x_range_min,
-        key="slider_x_min"
-    )
-    st.session_state.x_range_min = x_min
-
-with zoom_col2:
-    x_max = st.slider(
-        "End Day",
-        min_value=10,
-        max_value=DAYS,
-        value=st.session_state.x_range_max,
-        key="slider_x_max"
-    )
-    st.session_state.x_range_max = x_max
-
-with zoom_col3:
-    st.markdown("<br>", unsafe_allow_html=True)
-    col_a, col_b = st.columns(2)
-    with col_a:
-        if st.button("Full Range", use_container_width=True):
-            st.session_state.x_range_min = 0
-            st.session_state.x_range_max = DAYS
-            st.rerun()
-    with col_b:
-        if st.button("First 30d", use_container_width=True):
-            st.session_state.x_range_min = 0
-            st.session_state.x_range_max = 30
-            st.rerun()
-
-# Ensure min < max
-if st.session_state.x_range_min >= st.session_state.x_range_max:
-    st.session_state.x_range_max = st.session_state.x_range_min + 10
-
-# Get the shared range
-shared_x_range = get_shared_x_range()
-
-st.caption(f"Viewing days {shared_x_range[0]} to {shared_x_range[1]} ({shared_x_range[1] - shared_x_range[0]} days)")
+st.title("Options Strategy Analyzer (v2.0)")
+st.caption("Edit input curves to see calculated P/L. Use the range selector below each chart to zoom.")
 
 st.markdown("---")
 
@@ -208,12 +142,11 @@ pl_curve = calculate_pl_curve(
     price_chart.lines
 )
 
-# Update P/L chart with calculated data and shared x_range
+# Update P/L chart with calculated data
 pl_chart._state["lines"] = pl_curve
-pl_chart.x_range = shared_x_range  # Apply shared zoom
 pl_chart.render()
 
-st.caption("This chart shows calculated P/L based on your input curves below.")
+st.caption("Drag the range selector handles below to zoom. Double-click to reset.")
 
 st.markdown("---")
 
@@ -224,22 +157,16 @@ st.subheader("Input Variables (Editable)")
 
 input_col1, input_col2, input_col3 = st.columns(3)
 
-# IV Curve
 with input_col1:
     st.markdown("**Implied Volatility (%)**")
-    iv_chart.x_range = shared_x_range  # Apply shared zoom
     iv_chart.render()
 
-# Risk-Free Rate
 with input_col2:
     st.markdown("**Risk-Free Rate (%)**")
-    rate_chart.x_range = shared_x_range  # Apply shared zoom
     rate_chart.render()
 
-# Stock Price Prediction
 with input_col3:
     st.markdown("**Stock Price Prediction ($)**")
-    price_chart.x_range = shared_x_range  # Apply shared zoom
     price_chart.render()
 
 st.markdown("---")
@@ -268,25 +195,22 @@ with sum_col4:
 # ============================================
 with st.expander("Instructions"):
     st.markdown("""
-    ### How to Use
+    ### Range Selector (Zoom)
 
-    1. **X-Axis Slider (top)**
-       - Drag the sliders to zoom into a specific date range
-       - All 4 charts will sync to the same range
-       - Use "Full Range" to reset, "First 30d" for short-term view
+    Each chart has a range selector bar below it:
+    - **Drag the shaded area** to pan left/right
+    - **Drag the left/right handles** to zoom in/out
+    - **Double-click** the range selector to reset zoom
 
-    2. **Main P/L Chart**
-       - Shows calculated profit/loss based on your inputs
-       - Read-only (automatically calculated)
+    ### Editing Points
 
-    3. **Input Charts**
-       - Click to add points
-       - Click existing point to remove
-       - Drag points to move
-       - Click Save to apply changes
+    - **Click** on chart to add a point
+    - **Click** on existing point to remove it
+    - **Drag** a point to move it
+    - **Ctrl+drag** on chart to pan (when zoomed)
+    - Click **Save** to apply changes
 
     ### Notes
     - This is a prototype with simplified P/L calculation
     - Real implementation would use Black-Scholes pricing
-    - Strategy legs, underlying selection, and scenarios not yet implemented
     """)

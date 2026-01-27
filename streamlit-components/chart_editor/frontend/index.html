@@ -118,6 +118,89 @@
             margin-left: 10px;
         }
 
+        /* Range Selector (X-axis zoom brush) */
+        .range-selector {
+            position: relative;
+            height: 40px;
+            margin-top: 8px;
+            background: #f5f5f5;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            cursor: default;
+            user-select: none;
+        }
+
+        .range-selector.hidden {
+            display: none;
+        }
+
+        .range-selector-track {
+            position: absolute;
+            top: 8px;
+            left: 10px;
+            right: 10px;
+            height: 24px;
+            background: #e0e0e0;
+            border-radius: 2px;
+        }
+
+        .range-selector-viewport {
+            position: absolute;
+            top: 0;
+            height: 100%;
+            background: rgba(78, 205, 196, 0.3);
+            border: 2px solid #4ECDC4;
+            border-radius: 2px;
+            cursor: grab;
+        }
+
+        .range-selector-viewport:active {
+            cursor: grabbing;
+        }
+
+        .range-selector-handle {
+            position: absolute;
+            top: -2px;
+            width: 12px;
+            height: calc(100% + 4px);
+            background: #4ECDC4;
+            border-radius: 3px;
+            cursor: ew-resize;
+        }
+
+        .range-selector-handle:hover {
+            background: #3dbdb5;
+        }
+
+        .range-selector-handle.left {
+            left: -6px;
+        }
+
+        .range-selector-handle.right {
+            right: -6px;
+        }
+
+        .range-selector-label {
+            position: absolute;
+            bottom: 2px;
+            font-size: 10px;
+            color: #666;
+            pointer-events: none;
+        }
+
+        .range-selector-label.left {
+            left: 10px;
+        }
+
+        .range-selector-label.right {
+            right: 10px;
+        }
+
+        .range-selector-label.center {
+            left: 50%;
+            transform: translateX(-50%);
+        }
+
         .error-message {
             position: absolute;
             top: 50%;
@@ -366,6 +449,17 @@
                 <canvas id="chartCanvas"></canvas>
                 <div class="error-message" id="errorMessage">Cannot add point - X too close to existing point</div>
                 <div class="x-label" id="xLabel"></div>
+                <div class="range-selector hidden" id="rangeSelector">
+                    <div class="range-selector-track">
+                        <div class="range-selector-viewport" id="rangeSelectorViewport">
+                            <div class="range-selector-handle left" id="rangeHandleLeft"></div>
+                            <div class="range-selector-handle right" id="rangeHandleRight"></div>
+                        </div>
+                    </div>
+                    <span class="range-selector-label left" id="rangeLabelLeft">0</span>
+                    <span class="range-selector-label center" id="rangeLabelCenter">Drag to zoom</span>
+                    <span class="range-selector-label right" id="rangeLabelRight">100</span>
+                </div>
             </div>
         </div>
         <div class="edit-controls hidden" id="editControls">
@@ -547,6 +641,15 @@
                 this.panStartYRange = null;
                 this.onZoomCallback = null;
 
+                // Range selector state
+                this.rangeSelector = {
+                    enabled: false,
+                    dragging: null, // 'viewport', 'left', 'right', or null
+                    startX: 0,
+                    startLeft: 0,
+                    startRight: 0,
+                };
+
                 // Interaction state
                 this.hoveredPoint = null;
                 this.draggingPoint = null;
@@ -631,6 +734,19 @@
                     zoomControls.classList.remove('hidden');
                 } else {
                     zoomControls.classList.add('hidden');
+                }
+
+                // Show/hide and setup range selector
+                const rangeSelector = document.getElementById('rangeSelector');
+                if (this.zoomEnabled) {
+                    rangeSelector.classList.remove('hidden');
+                    rangeSelector.style.width = (this.canvas.width - 10) + 'px';
+                    this.rangeSelector.enabled = true;
+                    this.setupRangeSelector();
+                    this.updateRangeSelector();
+                } else {
+                    rangeSelector.classList.add('hidden');
+                    this.rangeSelector.enabled = false;
                 }
 
                 // Update UI elements
@@ -1409,6 +1525,10 @@
                 // Update UI
                 this.updateZoomInfo();
                 this.updateRangeInputs();
+                // Update range selector (if not currently being dragged)
+                if (!this.rangeSelector.dragging) {
+                    this.updateRangeSelector();
+                }
                 this.draw();
 
                 // Notify callback
@@ -1597,6 +1717,161 @@
                     }
                     this.sendZoomState();
                 }
+            }
+
+            // ============================================
+            // RANGE SELECTOR (X-axis zoom brush)
+            // ============================================
+
+            setupRangeSelector() {
+                if (this._rangeSelectorSetup) return;
+                this._rangeSelectorSetup = true;
+
+                const viewport = document.getElementById('rangeSelectorViewport');
+                const handleLeft = document.getElementById('rangeHandleLeft');
+                const handleRight = document.getElementById('rangeHandleRight');
+                const track = document.querySelector('.range-selector-track');
+
+                // Mouse down on viewport (drag entire range)
+                viewport.addEventListener('mousedown', (e) => {
+                    if (e.target === handleLeft || e.target === handleRight) return;
+                    e.preventDefault();
+                    this.rangeSelector.dragging = 'viewport';
+                    this.rangeSelector.startX = e.clientX;
+                    this.rangeSelector.startLeft = parseFloat(viewport.style.left) || 0;
+                    this.rangeSelector.startWidth = parseFloat(viewport.style.width) || 100;
+                });
+
+                // Mouse down on left handle
+                handleLeft.addEventListener('mousedown', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    this.rangeSelector.dragging = 'left';
+                    this.rangeSelector.startX = e.clientX;
+                    this.rangeSelector.startLeft = parseFloat(viewport.style.left) || 0;
+                    this.rangeSelector.startWidth = parseFloat(viewport.style.width) || 100;
+                });
+
+                // Mouse down on right handle
+                handleRight.addEventListener('mousedown', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    this.rangeSelector.dragging = 'right';
+                    this.rangeSelector.startX = e.clientX;
+                    this.rangeSelector.startLeft = parseFloat(viewport.style.left) || 0;
+                    this.rangeSelector.startWidth = parseFloat(viewport.style.width) || 100;
+                });
+
+                // Mouse move (global)
+                document.addEventListener('mousemove', (e) => {
+                    if (!this.rangeSelector.dragging) return;
+
+                    const trackRect = track.getBoundingClientRect();
+                    const trackWidth = trackRect.width;
+                    const dx = e.clientX - this.rangeSelector.startX;
+                    const dxPercent = (dx / trackWidth) * 100;
+
+                    let newLeft = this.rangeSelector.startLeft;
+                    let newWidth = this.rangeSelector.startWidth;
+
+                    if (this.rangeSelector.dragging === 'viewport') {
+                        // Move entire viewport
+                        newLeft = this.rangeSelector.startLeft + dxPercent;
+                        // Clamp to track bounds
+                        newLeft = Math.max(0, Math.min(100 - newWidth, newLeft));
+                    } else if (this.rangeSelector.dragging === 'left') {
+                        // Resize from left
+                        newLeft = this.rangeSelector.startLeft + dxPercent;
+                        newWidth = this.rangeSelector.startWidth - dxPercent;
+                        // Minimum width and bounds
+                        if (newWidth < 5) {
+                            newWidth = 5;
+                            newLeft = this.rangeSelector.startLeft + this.rangeSelector.startWidth - 5;
+                        }
+                        if (newLeft < 0) {
+                            newWidth += newLeft;
+                            newLeft = 0;
+                        }
+                    } else if (this.rangeSelector.dragging === 'right') {
+                        // Resize from right
+                        newWidth = this.rangeSelector.startWidth + dxPercent;
+                        // Minimum width and bounds
+                        if (newWidth < 5) newWidth = 5;
+                        if (newLeft + newWidth > 100) newWidth = 100 - newLeft;
+                    }
+
+                    // Apply to viewport
+                    viewport.style.left = newLeft + '%';
+                    viewport.style.width = newWidth + '%';
+
+                    // Update chart xRange
+                    this.applyRangeSelectorToChart(newLeft, newWidth);
+                });
+
+                // Mouse up (global)
+                document.addEventListener('mouseup', () => {
+                    if (this.rangeSelector.dragging) {
+                        this.rangeSelector.dragging = null;
+                        // Send final zoom state
+                        this.sendZoomState();
+                    }
+                });
+
+                // Double-click to reset
+                viewport.addEventListener('dblclick', () => {
+                    this.resetZoom();
+                });
+            }
+
+            applyRangeSelectorToChart(leftPercent, widthPercent) {
+                // Convert percentages to data coordinates
+                const fullRange = this.originalXRange[1] - this.originalXRange[0];
+                const newXMin = this.originalXRange[0] + (leftPercent / 100) * fullRange;
+                const newXMax = this.originalXRange[0] + ((leftPercent + widthPercent) / 100) * fullRange;
+
+                // Update chart range (don't trigger range selector update to avoid loop)
+                this.xRange = [newXMin, newXMax];
+
+                // Calculate zoom level
+                const currentXSize = newXMax - newXMin;
+                this.zoomLevel = fullRange / currentXSize;
+
+                // Update UI
+                this.updateZoomInfo();
+                this.updateRangeLabels(newXMin, newXMax);
+                this.draw();
+            }
+
+            updateRangeSelector() {
+                if (!this.rangeSelector.enabled) return;
+
+                const viewport = document.getElementById('rangeSelectorViewport');
+                if (!viewport) return;
+
+                // Calculate viewport position from current xRange
+                const fullRange = this.originalXRange[1] - this.originalXRange[0];
+                const leftPercent = ((this.xRange[0] - this.originalXRange[0]) / fullRange) * 100;
+                const rightPercent = ((this.xRange[1] - this.originalXRange[0]) / fullRange) * 100;
+                const widthPercent = rightPercent - leftPercent;
+
+                // Clamp values
+                const clampedLeft = Math.max(0, Math.min(100, leftPercent));
+                const clampedWidth = Math.max(5, Math.min(100 - clampedLeft, widthPercent));
+
+                viewport.style.left = clampedLeft + '%';
+                viewport.style.width = clampedWidth + '%';
+
+                this.updateRangeLabels(this.xRange[0], this.xRange[1]);
+            }
+
+            updateRangeLabels(xMin, xMax) {
+                const labelLeft = document.getElementById('rangeLabelLeft');
+                const labelRight = document.getElementById('rangeLabelRight');
+                const labelCenter = document.getElementById('rangeLabelCenter');
+
+                if (labelLeft) labelLeft.textContent = Math.round(this.originalXRange[0]);
+                if (labelRight) labelRight.textContent = Math.round(this.originalXRange[1]);
+                if (labelCenter) labelCenter.textContent = `${Math.round(xMin)} - ${Math.round(xMax)}`;
             }
         }
 
