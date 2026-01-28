@@ -335,8 +335,19 @@ def chart_editor(
     if component_value is None:
         result = [list(map(tuple, line)) for line in prepared_lines]
     elif isinstance(component_value, dict) and component_value.get('type') == 'zoom':
-        # Zoom state returned, not lines data - keep existing lines
-        result = [list(map(tuple, line)) for line in prepared_lines]
+        # Zoom state returned - extract lines data if present to prevent data loss
+        zoom_lines = component_value.get('lines')
+        if zoom_lines is not None:
+            result = []
+            for line in zoom_lines:
+                if line:
+                    sorted_line = sorted(line, key=lambda p: p[0])
+                    result.append([(float(p[0]), float(p[1])) for p in sorted_line])
+                else:
+                    result.append([])
+        else:
+            # Fallback to prepared_lines if no lines in zoom event
+            result = [list(map(tuple, line)) for line in prepared_lines]
         # Call on_zoom callback if provided
         if on_zoom is not None:
             zoom_x_range = tuple(component_value.get('xRange', x_range))

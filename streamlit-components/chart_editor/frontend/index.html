@@ -311,6 +311,11 @@
             border-color: #4ECDC4;
         }
 
+        .control-group input.invalid {
+            border-color: #FF6B6B;
+            background-color: #fff5f5;
+        }
+
         .line-selector {
             display: flex;
             gap: 8px;
@@ -440,6 +445,139 @@
         .debug-log .warn {
             color: #fdcb6e;
         }
+
+        /* Dark mode support */
+        @media (prefers-color-scheme: dark) {
+            body {
+                background: transparent;
+            }
+
+            .chart-container {
+                background: transparent;
+            }
+
+            .chart-title {
+                color: #e0e0e0;
+            }
+
+            .y-label,
+            .x-label {
+                color: #a0a0a0;
+            }
+
+            #chartCanvas {
+                border-color: #444;
+                background: #1e1e1e;
+            }
+
+            #chartCanvas.editing {
+                border-color: #4ECDC4;
+                box-shadow: 0 0 8px rgba(78, 205, 196, 0.5);
+            }
+
+            #chartCanvas.error-flash {
+                border-color: #FF6B6B;
+                box-shadow: 0 0 10px rgba(255, 107, 107, 0.6);
+            }
+
+            .range-selector {
+                background: linear-gradient(to bottom, #2a2a2a, #1e1e1e);
+                border-color: #444;
+            }
+
+            .range-selector-track {
+                background: #333;
+            }
+
+            .range-selector-viewport {
+                background: linear-gradient(to bottom, rgba(78, 205, 196, 0.3), rgba(78, 205, 196, 0.15));
+            }
+
+            .zoom-btn {
+                background: #2a2a2a;
+                border-color: #444;
+                color: #e0e0e0;
+            }
+
+            .zoom-btn:hover {
+                background: #333;
+            }
+
+            .zoom-btn:active {
+                background: #444;
+            }
+
+            .zoom-info {
+                color: #a0a0a0;
+            }
+
+            .edit-controls {
+                background: transparent;
+            }
+
+            .btn-cancel {
+                background: #2a2a2a;
+                border-color: #444;
+                color: #a0a0a0;
+            }
+
+            .btn-cancel:hover {
+                background: #333;
+            }
+
+            .control-group label {
+                color: #a0a0a0;
+            }
+
+            .control-group input {
+                background: #2a2a2a;
+                border-color: #444;
+                color: #e0e0e0;
+            }
+
+            .control-group input:focus {
+                border-color: #4ECDC4;
+            }
+
+            .control-group input.invalid {
+                border-color: #FF6B6B;
+                background-color: #3a2020;
+            }
+
+            .line-btn {
+                background: #1e1e1e;
+            }
+
+            .add-line-btn {
+                background: #1e1e1e;
+                border-color: #666;
+                color: #a0a0a0;
+            }
+
+            .add-line-btn:hover {
+                border-color: #4ECDC4;
+                color: #4ECDC4;
+            }
+
+            .tooltip {
+                background: rgba(255, 255, 255, 0.9);
+                color: #1e1e1e;
+            }
+
+            .instructions {
+                color: #666;
+            }
+
+            .debug-toggle {
+                background: #2a2a2a;
+                border-color: #444;
+                color: #a0a0a0;
+            }
+
+            .debug-toggle:hover {
+                background: #333;
+            }
+        }
     </style>
 </head>
 <body>
@@ -465,6 +603,8 @@
             </div>
         </div>
         <div class="edit-controls hidden" id="editControls">
+            <button class="zoom-btn" id="btnUndo" title="Undo (Ctrl+Z)" style="opacity: 0.5;">↶</button>
+            <button class="zoom-btn" id="btnRedo" title="Redo (Ctrl+Shift+Z)" style="opacity: 0.5;">↷</button>
             <span class="edit-status">Unsaved changes</span>
             <button class="btn-save" id="btnSave">Save</button>
             <button class="btn-cancel" id="btnCancel">Cancel</button>
@@ -657,12 +797,24 @@
                 this.draggingPoint = null;
                 this.isDragging = false;
 
+                // Keyboard navigation state
+                this.selectedPoint = null; // {lineIndex, pointIndex}
+
+                // Undo/redo history
+                this.historyStack = [];
+                this.historyIndex = -1;
+                this.maxHistorySize = 50;
+
                 // Bind event handlers
                 this.handleMouseMove = this.handleMouseMove.bind(this);
                 this.handleMouseDown = this.handleMouseDown.bind(this);
                 this.handleMouseUp = this.handleMouseUp.bind(this);
                 this.handleMouseLeave = this.handleMouseLeave.bind(this);
                 this.handleWheel = this.handleWheel.bind(this);
+                this.handleKeyDown = this.handleKeyDown.bind(this);
+                this.handleTouchStart = this.handleTouchStart.bind(this);
+                this.handleTouchMove = this.handleTouchMove.bind(this);
+                this.handleTouchEnd = this.handleTouchEnd.bind(this);
 
                 // Attach events
                 canvas.addEventListener('mousemove', this.handleMouseMove);
@@ -670,6 +822,24 @@
                 canvas.addEventListener('mouseup', this.handleMouseUp);
                 canvas.addEventListener('mouseleave', this.handleMouseLeave);
                 canvas.addEventListener('wheel', this.handleWheel, { passive: false });
+
+                // Touch events
+                canvas.addEventListener('touchstart', this.handleTouchStart, { passive: false });
+                canvas.addEventListener('touchmove', this.handleTouchMove, { passive: false });
+                canvas.addEventListener('touchend', this.handleTouchEnd, { passive: false });
+
+                // Make canvas focusable for keyboard events
+                canvas.setAttribute('tabindex', '0');
+                canvas.addEventListener('keydown', this.handleKeyDown);
+
+                // Touch state for pinch-to-zoom
+                this.touchState = {
+                    touches: [],
+                    initialPinchDistance: null,
+                    initialZoomLevel: 1,
+                    initialXRange: null,
+                    initialYRange: null
+                };
 
                 DebugLog.log('EDITOR_INIT', 'ChartEditor initialized');
             }
@@ -763,15 +933,29 @@
 
                 this.updateLineSelector();
                 this.draw();
+
+                // Initialize history with loaded data
+                this.initHistory();
             }
 
             // Enter editing mode (show Save/Cancel buttons)
             enterEditMode() {
-                if (this.isEditing) return;
-                this.isEditing = true;
-                this.canvas.classList.add('editing');
-                document.getElementById('editControls').classList.remove('hidden');
-                DebugLog.log('EDIT_MODE', 'Entered editing mode');
+                const wasEditing = this.isEditing;
+                if (!this.isEditing) {
+                    this.isEditing = true;
+                    this.canvas.classList.add('editing');
+                    document.getElementById('editControls').classList.remove('hidden');
+                    DebugLog.log('EDIT_MODE', 'Entered editing mode');
+                }
+
+                // Push history state before modification (if we were already editing, or this is first edit)
+                if (!wasEditing) {
+                    // Initialize history if this is first edit
+                    this.initHistory();
+                } else {
+                    // Push current state before the upcoming modification
+                    this.pushHistory();
+                }
             }
 
             // Save changes to Python
@@ -794,6 +978,132 @@
                 this.updateLineSelector();
                 this.draw();
                 DebugLog.log('CHANGES_CANCELLED', 'Reverted to saved state');
+            }
+
+            // Push current state to history stack
+            pushHistory() {
+                // Remove any redo states
+                if (this.historyIndex < this.historyStack.length - 1) {
+                    this.historyStack = this.historyStack.slice(0, this.historyIndex + 1);
+                }
+
+                // Add current state
+                this.historyStack.push(deepCloneLines(this.lines));
+                this.historyIndex = this.historyStack.length - 1;
+
+                // Limit history size
+                if (this.historyStack.length > this.maxHistorySize) {
+                    this.historyStack.shift();
+                    this.historyIndex--;
+                }
+
+                this.updateUndoRedoButtons();
+            }
+
+            // Undo last action
+            undo() {
+                if (this.historyIndex <= 0) return false;
+
+                this.historyIndex--;
+                this.lines = deepCloneLines(this.historyStack[this.historyIndex]);
+                this.updateLineSelector();
+                this.draw();
+                this.updateUndoRedoButtons();
+
+                DebugLog.log('UNDO', {
+                    historyIndex: this.historyIndex,
+                    stackSize: this.historyStack.length
+                });
+
+                return true;
+            }
+
+            // Redo last undone action
+            redo() {
+                if (this.historyIndex >= this.historyStack.length - 1) return false;
+
+                this.historyIndex++;
+                this.lines = deepCloneLines(this.historyStack[this.historyIndex]);
+                this.updateLineSelector();
+                this.draw();
+                this.updateUndoRedoButtons();
+
+                DebugLog.log('REDO', {
+                    historyIndex: this.historyIndex,
+                    stackSize: this.historyStack.length
+                });
+
+                return true;
+            }
+
+            // Check if undo/redo is available
+            canUndo() {
+                return this.historyIndex > 0;
+            }
+
+            canRedo() {
+                return this.historyIndex < this.historyStack.length - 1;
+            }
+
+            // Update undo/redo button states
+            updateUndoRedoButtons() {
+                const undoBtn = document.getElementById('btnUndo');
+                const redoBtn = document.getElementById('btnRedo');
+
+                if (undoBtn) {
+                    undoBtn.disabled = !this.canUndo();
+                    undoBtn.style.opacity = this.canUndo() ? '1' : '0.5';
+                }
+                if (redoBtn) {
+                    redoBtn.disabled = !this.canRedo();
+                    redoBtn.style.opacity = this.canRedo() ? '1' : '0.5';
+                }
+            }
+
+            // Initialize history with current state
+            initHistory() {
+                this.historyStack = [deepCloneLines(this.lines)];
+                this.historyIndex = 0;
+                this.updateUndoRedoButtons();
+            }
+
+            // Smooth zoom animation
+            animateZoom(targetXMin, targetXMax, targetYMin, targetYMax, duration = 200) {
+                // Cancel any existing animation
+                if (this.zoomAnimationId) {
+                    cancelAnimationFrame(this.zoomAnimationId);
+                }
+
+                const startXRange = [...this.xRange];
+                const startYRange = [...this.yRange];
+                const startTime = performance.now();
+
+                const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
+
+                const animate = (currentTime) => {
+                    const elapsed = currentTime - startTime;
+                    const progress = Math.min(elapsed / duration, 1);
+                    const easedProgress = easeOutCubic(progress);
+
+                    // Interpolate ranges
+                    const currentXMin = startXRange[0] + (targetXMin - startXRange[0]) * easedProgress;
+                    const currentXMax = startXRange[1] + (targetXMax - startXRange[1]) * easedProgress;
+                    const currentYMin = startYRange[0] + (targetYMin - startYRange[0]) * easedProgress;
+                    const currentYMax = startYRange[1] + (targetYMax - startYRange[1]) * easedProgress;
+
+                    // Apply intermediate zoom without notification
+                    this.setZoomRange(currentXMin, currentXMax, currentYMin, currentYMax, false);
+
+                    if (progress < 1) {
+                        this.zoomAnimationId = requestAnimationFrame(animate);
+                    } else {
+                        // Animation complete - send final state
+                        this.zoomAnimationId = null;
+                        this.setZoomRange(targetXMin, targetXMax, targetYMin, targetYMax, true);
+                    }
+                };
+
+                this.zoomAnimationId = requestAnimationFrame(animate);
             }
 
             updateLineSelector() {
@@ -843,10 +1153,18 @@
                 const chartWidth = this.canvas.width - this.padding.left - this.padding.right;
                 const chartHeight = this.canvas.height - this.padding.top - this.padding.bottom;
 
+                // Guard against division by zero
+                const xRangeSize = this.xRange[1] - this.xRange[0];
+                const yRangeSize = this.yRange[1] - this.yRange[0];
+
+                if (xRangeSize === 0 || yRangeSize === 0) {
+                    return {x: this.padding.left, y: this.padding.top};
+                }
+
                 const canvasX = this.padding.left +
-                    ((x - this.xRange[0]) / (this.xRange[1] - this.xRange[0])) * chartWidth;
+                    ((x - this.xRange[0]) / xRangeSize) * chartWidth;
                 const canvasY = this.padding.top +
-                    (1 - (y - this.yRange[0]) / (this.yRange[1] - this.yRange[0])) * chartHeight;
+                    (1 - (y - this.yRange[0]) / yRangeSize) * chartHeight;
 
                 return {x: canvasX, y: canvasY};
             }
@@ -854,6 +1172,11 @@
             canvasToData(canvasX, canvasY) {
                 const chartWidth = this.canvas.width - this.padding.left - this.padding.right;
                 const chartHeight = this.canvas.height - this.padding.top - this.padding.bottom;
+
+                // Guard against division by zero
+                if (chartWidth === 0 || chartHeight === 0) {
+                    return {x: this.xRange[0], y: this.yRange[0]};
+                }
 
                 let x = this.xRange[0] +
                     ((canvasX - this.padding.left) / chartWidth) * (this.xRange[1] - this.xRange[0]);
@@ -863,8 +1186,9 @@
                 if (this.gridSnap) {
                     const xStep = (this.xRange[1] - this.xRange[0]) * this.gridSnap[0] / 100;
                     const yStep = (this.yRange[1] - this.yRange[0]) * this.gridSnap[1] / 100;
-                    x = Math.round(x / xStep) * xStep;
-                    y = Math.round(y / yStep) * yStep;
+                    // Guard against zero step sizes
+                    if (xStep > 0) x = Math.round(x / xStep) * xStep;
+                    if (yStep > 0) y = Math.round(y / yStep) * yStep;
                 }
 
                 x = Math.max(this.xRange[0], Math.min(this.xRange[1], x));
@@ -1183,6 +1507,304 @@
                 this.draw();
             }
 
+            handleKeyDown(e) {
+                // Handle undo/redo shortcuts (always available if not disabled)
+                if ((e.ctrlKey || e.metaKey) && !this.disabled && !this.readOnly) {
+                    if (e.key === 'z' && !e.shiftKey) {
+                        e.preventDefault();
+                        if (this.undo()) {
+                            this.enterEditMode();
+                        }
+                        return;
+                    }
+                    if ((e.key === 'z' && e.shiftKey) || e.key === 'y') {
+                        e.preventDefault();
+                        if (this.redo()) {
+                            this.enterEditMode();
+                        }
+                        return;
+                    }
+                }
+
+                // Block keyboard interactions if disabled or read-only (except Escape)
+                if (this.disabled && e.key !== 'Escape') return;
+
+                const activeLine = this.lines[this.activeLineIndex] || [];
+                const step = e.shiftKey ? 10 : 1; // Larger steps with Shift
+                const xStep = (this.xRange[1] - this.xRange[0]) * step / 100;
+                const yStep = (this.yRange[1] - this.yRange[0]) * step / 100;
+
+                switch (e.key) {
+                    case 'Tab':
+                        // Cycle through points
+                        e.preventDefault();
+                        if (activeLine.length === 0) return;
+
+                        if (this.selectedPoint === null || this.selectedPoint.lineIndex !== this.activeLineIndex) {
+                            // Select first point
+                            this.selectedPoint = {lineIndex: this.activeLineIndex, pointIndex: 0};
+                        } else if (e.shiftKey) {
+                            // Previous point
+                            this.selectedPoint.pointIndex--;
+                            if (this.selectedPoint.pointIndex < 0) {
+                                this.selectedPoint.pointIndex = activeLine.length - 1;
+                            }
+                        } else {
+                            // Next point
+                            this.selectedPoint.pointIndex++;
+                            if (this.selectedPoint.pointIndex >= activeLine.length) {
+                                this.selectedPoint.pointIndex = 0;
+                            }
+                        }
+                        DebugLog.log('KEYBOARD_SELECT', {point: this.selectedPoint.pointIndex + 1});
+                        this.draw();
+                        break;
+
+                    case 'ArrowLeft':
+                    case 'ArrowRight':
+                    case 'ArrowUp':
+                    case 'ArrowDown':
+                        if (this.readOnly) return;
+                        if (this.selectedPoint === null) return;
+                        e.preventDefault();
+
+                        const point = activeLine[this.selectedPoint.pointIndex];
+                        if (!point) return;
+
+                        let newX = point.x;
+                        let newY = point.y;
+
+                        if (e.key === 'ArrowLeft') newX -= xStep;
+                        if (e.key === 'ArrowRight') newX += xStep;
+                        if (e.key === 'ArrowUp') newY += yStep;
+                        if (e.key === 'ArrowDown') newY -= yStep;
+
+                        // Clamp to range
+                        newX = Math.max(this.xRange[0], Math.min(this.xRange[1], newX));
+                        newY = Math.max(this.yRange[0], Math.min(this.yRange[1], newY));
+
+                        // Check for X conflicts (excluding current point)
+                        if (this.hasConflictingX(this.activeLineIndex, newX, this.selectedPoint.pointIndex)) {
+                            this.showErrorFlash('Cannot move - X too close to existing point');
+                            return;
+                        }
+
+                        this.enterEditMode();
+                        point.x = newX;
+                        point.y = newY;
+
+                        // Re-sort and find new index
+                        activeLine.sort((a, b) => a.x - b.x);
+                        this.selectedPoint.pointIndex = activeLine.indexOf(point);
+
+                        DebugLog.log('KEYBOARD_MOVE', {
+                            point: this.selectedPoint.pointIndex + 1,
+                            newCoords: {x: newX.toFixed(2), y: newY.toFixed(2)}
+                        });
+                        this.updateLineSelector();
+                        this.draw();
+                        break;
+
+                    case 'Delete':
+                    case 'Backspace':
+                        if (this.readOnly) return;
+                        if (this.selectedPoint === null) return;
+                        e.preventDefault();
+
+                        // Check min points constraint
+                        if (this.minPoints > 0 && activeLine.length <= this.minPoints) {
+                            this.showErrorFlash(`Cannot remove - Minimum ${this.minPoints} points required`);
+                            return;
+                        }
+
+                        this.enterEditMode();
+                        const removedPoint = activeLine[this.selectedPoint.pointIndex];
+                        activeLine.splice(this.selectedPoint.pointIndex, 1);
+
+                        DebugLog.log('KEYBOARD_DELETE', {
+                            coords: {x: removedPoint.x.toFixed(2), y: removedPoint.y.toFixed(2)},
+                            remaining: activeLine.length
+                        });
+
+                        // Adjust selection
+                        if (activeLine.length === 0) {
+                            this.selectedPoint = null;
+                        } else if (this.selectedPoint.pointIndex >= activeLine.length) {
+                            this.selectedPoint.pointIndex = activeLine.length - 1;
+                        }
+
+                        this.updateLineSelector();
+                        this.draw();
+                        break;
+
+                    case 'Enter':
+                    case ' ':
+                        if (this.readOnly) return;
+                        e.preventDefault();
+
+                        // Add point at center of visible range
+                        const centerX = (this.xRange[0] + this.xRange[1]) / 2;
+                        const centerY = (this.yRange[0] + this.yRange[1]) / 2;
+
+                        // Check max points constraint
+                        if (this.maxPoints !== null && activeLine.length >= this.maxPoints) {
+                            this.showErrorFlash(`Cannot add - Maximum ${this.maxPoints} points per line`);
+                            return;
+                        }
+
+                        // Check X conflicts
+                        if (this.hasConflictingX(this.activeLineIndex, centerX)) {
+                            this.showErrorFlash('Cannot add - X too close to existing point');
+                            return;
+                        }
+
+                        this.enterEditMode();
+                        activeLine.push({x: centerX, y: centerY});
+                        activeLine.sort((a, b) => a.x - b.x);
+
+                        // Select the new point
+                        const newPointIndex = activeLine.findIndex(p => p.x === centerX && p.y === centerY);
+                        this.selectedPoint = {lineIndex: this.activeLineIndex, pointIndex: newPointIndex};
+
+                        DebugLog.log('KEYBOARD_ADD', {
+                            coords: {x: centerX.toFixed(2), y: centerY.toFixed(2)},
+                            totalPoints: activeLine.length
+                        });
+
+                        this.updateLineSelector();
+                        this.draw();
+                        break;
+
+                    case 'Escape':
+                        // Deselect point
+                        this.selectedPoint = null;
+                        DebugLog.log('KEYBOARD_DESELECT', 'Point deselected');
+                        this.draw();
+                        break;
+                }
+            }
+
+            // Touch event handlers for mobile support
+            getTouchPosition(touch) {
+                const rect = this.canvas.getBoundingClientRect();
+                return {
+                    x: touch.clientX - rect.left,
+                    y: touch.clientY - rect.top
+                };
+            }
+
+            getPinchDistance(touch1, touch2) {
+                const dx = touch2.clientX - touch1.clientX;
+                const dy = touch2.clientY - touch1.clientY;
+                return Math.sqrt(dx * dx + dy * dy);
+            }
+
+            getPinchCenter(touch1, touch2) {
+                const rect = this.canvas.getBoundingClientRect();
+                return {
+                    x: (touch1.clientX + touch2.clientX) / 2 - rect.left,
+                    y: (touch1.clientY + touch2.clientY) / 2 - rect.top
+                };
+            }
+
+            handleTouchStart(e) {
+                e.preventDefault();
+
+                if (e.touches.length === 1) {
+                    // Single touch - treat like mouse down
+                    const pos = this.getTouchPosition(e.touches[0]);
+                    this.handleMouseDown({
+                        clientX: e.touches[0].clientX,
+                        clientY: e.touches[0].clientY,
+                        button: 0,
+                        ctrlKey: false,
+                        metaKey: false,
+                        preventDefault: () => {}
+                    });
+                } else if (e.touches.length === 2 && this.zoomEnabled) {
+                    // Two finger pinch - start zoom gesture
+                    this.touchState.initialPinchDistance = this.getPinchDistance(e.touches[0], e.touches[1]);
+                    this.touchState.initialZoomLevel = this.zoomLevel;
+                    this.touchState.initialXRange = [...this.xRange];
+                    this.touchState.initialYRange = [...this.yRange];
+                    this.touchState.pinchCenter = this.getPinchCenter(e.touches[0], e.touches[1]);
+
+                    // Cancel any ongoing drag
+                    this.isDragging = false;
+                    this.draggingPoint = null;
+                    this.isPanning = false;
+
+                    DebugLog.log('PINCH_START', {
+                        distance: this.touchState.initialPinchDistance.toFixed(0),
+                        center: this.touchState.pinchCenter
+                    });
+                }
+            }
+
+            handleTouchMove(e) {
+                e.preventDefault();
+
+                if (e.touches.length === 1 && !this.touchState.initialPinchDistance) {
+                    // Single touch - treat like mouse move
+                    this.handleMouseMove({
+                        clientX: e.touches[0].clientX,
+                        clientY: e.touches[0].clientY
+                    });
+                } else if (e.touches.length === 2 && this.zoomEnabled && this.touchState.initialPinchDistance) {
+                    // Pinch zoom
+                    const currentDistance = this.getPinchDistance(e.touches[0], e.touches[1]);
+                    const scale = currentDistance / this.touchState.initialPinchDistance;
+
+                    // Calculate new ranges (zoom centered on pinch center)
+                    const centerPos = this.canvasToData(
+                        this.touchState.pinchCenter.x,
+                        this.touchState.pinchCenter.y
+                    );
+
+                    const initialXSize = this.touchState.initialXRange[1] - this.touchState.initialXRange[0];
+                    const initialYSize = this.touchState.initialYRange[1] - this.touchState.initialYRange[0];
+
+                    const newXSize = initialXSize / scale;
+                    const newYSize = initialYSize / scale;
+
+                    // Calculate new ranges centered on pinch center
+                    const xFraction = (centerPos.x - this.touchState.initialXRange[0]) / initialXSize;
+                    const yFraction = (centerPos.y - this.touchState.initialYRange[0]) / initialYSize;
+
+                    const newXMin = centerPos.x - xFraction * newXSize;
+                    const newXMax = newXMin + newXSize;
+                    const newYMin = centerPos.y - yFraction * newYSize;
+                    const newYMax = newYMin + newYSize;
+
+                    this.setZoomRange(newXMin, newXMax, newYMin, newYMax, false);
+                }
+            }
+
+            handleTouchEnd(e) {
+                if (this.touchState.initialPinchDistance && e.touches.length < 2) {
+                    // End pinch zoom
+                    DebugLog.log('PINCH_END', {
+                        zoomLevel: this.zoomLevel.toFixed(2)
+                    });
+
+                    // Send final zoom state
+                    this.sendZoomState();
+
+                    this.touchState.initialPinchDistance = null;
+                    this.touchState.initialXRange = null;
+                    this.touchState.initialYRange = null;
+                    this.touchState.pinchCenter = null;
+                }
+
+                if (e.touches.length === 0) {
+                    // All touches ended - treat like mouse up
+                    this.handleMouseUp({
+                        clientX: e.changedTouches[0]?.clientX || 0,
+                        clientY: e.changedTouches[0]?.clientY || 0
+                    });
+                }
+            }
+
             showTooltip(x, y, dataPoint, lineIndex = null) {
                 const tooltip = document.getElementById('tooltip');
                 let text = `(${dataPoint.x.toFixed(2)}, ${dataPoint.y.toFixed(2)})`;
@@ -1211,10 +1833,50 @@
                 }, 800);
             }
 
-            updateRange(axis, minOrMax, value) {
+            updateRange(axis, minOrMax, value, inputElement) {
                 const val = parseFloat(value);
-                if (isNaN(val)) return;
+                if (isNaN(val)) {
+                    if (inputElement) {
+                        inputElement.classList.add('invalid');
+                        setTimeout(() => inputElement.classList.remove('invalid'), 1500);
+                    }
+                    return;
+                }
 
+                // Validate min < max
+                let newMin, newMax, isValid = true;
+                if (axis === 'x') {
+                    newMin = minOrMax === 'min' ? val : this.xRange[0];
+                    newMax = minOrMax === 'max' ? val : this.xRange[1];
+                    if (newMin >= newMax) {
+                        isValid = false;
+                    }
+                } else {
+                    newMin = minOrMax === 'min' ? val : this.yRange[0];
+                    newMax = minOrMax === 'max' ? val : this.yRange[1];
+                    if (newMin >= newMax) {
+                        isValid = false;
+                    }
+                }
+
+                if (!isValid) {
+                    // Show error and revert
+                    if (inputElement) {
+                        inputElement.classList.add('invalid');
+                        setTimeout(() => inputElement.classList.remove('invalid'), 1500);
+                        // Revert to previous value
+                        if (axis === 'x') {
+                            inputElement.value = minOrMax === 'min' ? this.xRange[0] : this.xRange[1];
+                        } else {
+                            inputElement.value = minOrMax === 'min' ? this.yRange[0] : this.yRange[1];
+                        }
+                    }
+                    this.showErrorFlash('Min must be less than Max');
+                    DebugLog.log('RANGE_INVALID', {axis, minOrMax, value: val, reason: 'min >= max'}, 'warn');
+                    return;
+                }
+
+                // Apply valid range
                 if (axis === 'x') {
                     if (minOrMax === 'min') this.xRange[0] = val;
                     else this.xRange[1] = val;
@@ -1232,8 +1894,12 @@
                 const overlaps = new Map(); // key: "x,y" -> array of {lineIndex, pointIndex}
 
                 // Grid cell size for grouping (1% of range)
-                const xCell = (this.xRange[1] - this.xRange[0]) * 0.01;
-                const yCell = (this.yRange[1] - this.yRange[0]) * 0.01;
+                const xRangeSize = this.xRange[1] - this.xRange[0];
+                const yRangeSize = this.yRange[1] - this.yRange[0];
+
+                // Guard against zero range - use fallback cell sizes
+                const xCell = xRangeSize > 0 ? xRangeSize * 0.01 : 1;
+                const yCell = yRangeSize > 0 ? yRangeSize * 0.01 : 1;
 
                 // Group all points by grid cell
                 const grid = new Map();
@@ -1266,12 +1932,18 @@
                 return overlaps;
             }
 
+            // Check if dark mode is active
+            isDarkMode() {
+                return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+            }
+
             draw() {
                 const ctx = this.ctx;
                 const width = this.canvas.width;
                 const height = this.canvas.height;
+                const isDark = this.isDarkMode();
 
-                ctx.fillStyle = '#fafafa';
+                ctx.fillStyle = isDark ? '#1e1e1e' : '#fafafa';
                 ctx.fillRect(0, 0, width, height);
 
                 this.drawGrid();
@@ -1330,7 +2002,21 @@
                         const isDragging = this.draggingPoint &&
                             this.draggingPoint.lineIndex === lineIndex &&
                             this.draggingPoint.pointIndex === pointIndex;
+                        const isSelected = this.selectedPoint &&
+                            this.selectedPoint.lineIndex === lineIndex &&
+                            this.selectedPoint.pointIndex === pointIndex;
                         const isOverlapping = overlappingSet.has(`${lineIndex},${pointIndex}`);
+
+                        // Selected point indicator (keyboard navigation)
+                        if (isSelected) {
+                            ctx.beginPath();
+                            ctx.arc(canvasPoint.x, canvasPoint.y, this.dotRadius + 6, 0, Math.PI * 2);
+                            ctx.strokeStyle = color;
+                            ctx.lineWidth = 2;
+                            ctx.setLineDash([4, 2]);
+                            ctx.stroke();
+                            ctx.setLineDash([]);
+                        }
 
                         // Hover/drag highlight
                         if (isHovered || isDragging) {
@@ -1396,8 +2082,9 @@
                 const ctx = this.ctx;
                 const chartWidth = this.canvas.width - this.padding.left - this.padding.right;
                 const chartHeight = this.canvas.height - this.padding.top - this.padding.bottom;
+                const isDark = this.isDarkMode();
 
-                ctx.strokeStyle = '#e0e0e0';
+                ctx.strokeStyle = isDark ? '#333' : '#e0e0e0';
                 ctx.lineWidth = 1;
 
                 for (let i = 0; i <= 10; i++) {
@@ -1421,8 +2108,9 @@
                 const ctx = this.ctx;
                 const chartWidth = this.canvas.width - this.padding.left - this.padding.right;
                 const chartHeight = this.canvas.height - this.padding.top - this.padding.bottom;
+                const isDark = this.isDarkMode();
 
-                ctx.fillStyle = '#666';
+                ctx.fillStyle = isDark ? '#a0a0a0' : '#666';
                 ctx.font = '11px -apple-system, BlinkMacSystemFont, sans-serif';
 
                 for (let i = 0; i <= 5; i++) {
@@ -1466,6 +2154,9 @@
                 const xRangeSize = this.xRange[1] - this.xRange[0];
                 const yRangeSize = this.yRange[1] - this.yRange[0];
 
+                // Guard against division by zero
+                if (xRangeSize === 0 || yRangeSize === 0) return;
+
                 const newXRangeSize = xRangeSize * zoomFactor;
                 const newYRangeSize = yRangeSize * zoomFactor;
 
@@ -1485,8 +2176,14 @@
 
             setZoomRange(xMin, xMax, yMin, yMax, notify = true) {
                 // Enforce minimum zoom (don't zoom in too far - minimum 5% of original range)
-                const minXRange = (this.originalXRange[1] - this.originalXRange[0]) * 0.05;
-                const minYRange = (this.originalYRange[1] - this.originalYRange[0]) * 0.05;
+                const originalXSize = this.originalXRange[1] - this.originalXRange[0];
+                const originalYSize = this.originalYRange[1] - this.originalYRange[0];
+
+                // Guard against zero original range
+                if (originalXSize === 0 || originalYSize === 0) return;
+
+                const minXRange = originalXSize * 0.05;
+                const minYRange = originalYSize * 0.05;
 
                 if (xMax - xMin < minXRange) {
                     const center = (xMax + xMin) / 2;
@@ -1541,9 +2238,9 @@
                 this.yRange = [yMin, yMax];
 
                 // Calculate zoom level (based on X axis)
-                const originalXSize = this.originalXRange[1] - this.originalXRange[0];
                 const currentXSize = xMax - xMin;
-                this.zoomLevel = originalXSize / currentXSize;
+                // Guard against division by zero
+                this.zoomLevel = currentXSize > 0 ? originalXSize / currentXSize : 1;
 
                 // Update UI
                 this.updateZoomInfo();
@@ -1576,9 +2273,12 @@
             }
 
             sendZoomState() {
+                // Include lines data with zoom events to prevent data loss
+                const linesData = this.lines.map(line => line.map(p => [p.x, p.y]));
                 sendMessageToStreamlit("streamlit:setComponentValue", {
                     value: {
                         type: 'zoom',
+                        lines: linesData,
                         xRange: this.xRange,
                         yRange: this.yRange,
                         zoomLevel: this.zoomLevel
@@ -1608,7 +2308,7 @@
                 const xHalf = (this.xRange[1] - this.xRange[0]) / 2 * 0.8;
                 const yHalf = (this.yRange[1] - this.yRange[0]) / 2 * 0.8;
 
-                this.setZoomRange(
+                this.animateZoom(
                     xCenter - xHalf,
                     xCenter + xHalf,
                     yCenter - yHalf,
@@ -1624,7 +2324,7 @@
                 const xHalf = (this.xRange[1] - this.xRange[0]) / 2 * 1.25;
                 const yHalf = (this.yRange[1] - this.yRange[0]) / 2 * 1.25;
 
-                this.setZoomRange(
+                this.animateZoom(
                     xCenter - xHalf,
                     xCenter + xHalf,
                     yCenter - yHalf,
@@ -1635,7 +2335,7 @@
             resetZoom() {
                 if (!this.zoomEnabled) return;
 
-                this.setZoomRange(
+                this.animateZoom(
                     this.originalXRange[0],
                     this.originalXRange[1],
                     this.originalYRange[0],
@@ -1671,7 +2371,7 @@
                 const xPadding = (maxX - minX) * 0.1 || 1;
                 const yPadding = (maxY - minY) * 0.1 || 1;
 
-                this.setZoomRange(
+                this.animateZoom(
                     minX - xPadding,
                     maxX + xPadding,
                     minY - yPadding,
@@ -1849,6 +2549,10 @@
             applyRangeSelectorToChart(leftPercent, widthPercent) {
                 // Convert percentages to data coordinates
                 const fullRange = this.originalXRange[1] - this.originalXRange[0];
+
+                // Guard against zero full range
+                if (fullRange === 0) return;
+
                 const newXMin = this.originalXRange[0] + (leftPercent / 100) * fullRange;
                 const newXMax = this.originalXRange[0] + ((leftPercent + widthPercent) / 100) * fullRange;
 
@@ -1857,7 +2561,8 @@
 
                 // Calculate zoom level
                 const currentXSize = newXMax - newXMin;
-                this.zoomLevel = fullRange / currentXSize;
+                // Guard against division by zero
+                this.zoomLevel = currentXSize > 0 ? fullRange / currentXSize : 1;
 
                 // Update UI
                 this.updateZoomInfo();
@@ -1873,6 +2578,14 @@
 
                 // Calculate viewport position from current xRange
                 const fullRange = this.originalXRange[1] - this.originalXRange[0];
+
+                // Guard against division by zero
+                if (fullRange === 0) {
+                    viewport.style.left = '0%';
+                    viewport.style.width = '100%';
+                    return;
+                }
+
                 const leftPercent = ((this.xRange[0] - this.originalXRange[0]) / fullRange) * 100;
                 const rightPercent = ((this.xRange[1] - this.originalXRange[0]) / fullRange) * 100;
                 const widthPercent = rightPercent - leftPercent;
@@ -1924,6 +2637,18 @@
                 editor.cancelChanges();
             });
 
+            // Undo/Redo buttons
+            document.getElementById('btnUndo').addEventListener('click', () => {
+                if (editor.undo()) {
+                    editor.enterEditMode();
+                }
+            });
+            document.getElementById('btnRedo').addEventListener('click', () => {
+                if (editor.redo()) {
+                    editor.enterEditMode();
+                }
+            });
+
             // Zoom buttons
             document.getElementById('btnZoomIn').addEventListener('click', () => {
                 editor.zoomIn();
@@ -1940,16 +2665,16 @@
 
             // Range input changes
             document.getElementById('xMin').addEventListener('change', (e) => {
-                editor.updateRange('x', 'min', e.target.value);
+                editor.updateRange('x', 'min', e.target.value, e.target);
             });
             document.getElementById('xMax').addEventListener('change', (e) => {
-                editor.updateRange('x', 'max', e.target.value);
+                editor.updateRange('x', 'max', e.target.value, e.target);
             });
             document.getElementById('yMin').addEventListener('change', (e) => {
-                editor.updateRange('y', 'min', e.target.value);
+                editor.updateRange('y', 'min', e.target.value, e.target);
             });
             document.getElementById('yMax').addEventListener('change', (e) => {
-                editor.updateRange('y', 'max', e.target.value);
+                editor.updateRange('y', 'max', e.target.value, e.target);
             });
 
             // Listen for messages from Streamlit
