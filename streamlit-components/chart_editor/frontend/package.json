@@ -1,0 +1,50 @@
+{
+  "name": "chart-editor-component",
+  "version": "2.0.0",
+  "description": "Interactive 2D chart editor component for Streamlit (TypeScript)",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "npm run clean && npm run compile && npm run bundle",
+    "clean": "rm -rf dist build",
+    "compile": "tsc",
+    "bundle": "rollup -c",
+    "watch": "concurrently \"tsc --watch\" \"rollup -c -w\"",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint src/**/*.ts",
+    "lint:fix": "eslint src/**/*.ts --fix",
+    "test": "jest",
+    "test:watch": "jest --watch",
+    "test:coverage": "jest --coverage",
+    "prebuild": "npm run lint && npm run typecheck"
+  },
+  "keywords": [
+    "streamlit",
+    "chart",
+    "editor",
+    "typescript",
+    "canvas",
+    "interactive"
+  ],
+  "author": "Chart Editor Contributors",
+  "license": "MIT",
+  "devDependencies": {
+    "@types/jest": "^29.5.11",
+    "@types/node": "^20.10.6",
+    "@typescript-eslint/eslint-plugin": "^6.17.0",
+    "@typescript-eslint/parser": "^6.17.0",
+    "concurrently": "^8.2.2",
+    "eslint": "^8.56.0",
+    "jest": "^29.7.0",
+    "rollup": "^4.9.1",
+    "@rollup/plugin-terser": "^0.4.4",
+    "@rollup/plugin-typescript": "^11.1.6",
+    "ts-jest": "^29.1.1",
+    "typescript": "^5.3.3"
+  },
+  "dependencies": {},
+  "engines": {
+    "node": ">=16.0.0",
+    "npm": ">=8.0.0"
+  }
+}
