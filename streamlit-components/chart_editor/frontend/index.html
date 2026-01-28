@@ -2170,8 +2170,8 @@
                 const newYMin = dataPos.y - yFraction * newYRangeSize;
                 const newYMax = newYMin + newYRangeSize;
 
-                // Use short animation for smooth feel (50ms)
-                this.animateZoom(newXMin, newXMax, newYMin, newYMax, 50);
+                // Apply zoom instantly (animation causes issues with trackpad inertial scrolling)
+                this.setZoomRange(newXMin, newXMax, newYMin, newYMax);
             }
 
             setZoomRange(xMin, xMax, yMin, yMax, notify = true) {

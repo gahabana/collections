@@ -90,8 +90,7 @@
 8. **Issue 2.9 - Smooth zoom animations**
    - `animateZoom()` with `requestAnimationFrame` for button zooms
    - Cubic easing, 200ms duration for zoom in/out, fit-to-data, reset zoom
-   - `startWheelZoomAnimation()` for smooth mouse wheel zoom
-   - Momentum-based interpolation prevents erratic/jerky wheel zoom
+   - Note: Wheel/trackpad zoom is instant (animation conflicts with trackpad inertial scrolling)
 
 ---
 
