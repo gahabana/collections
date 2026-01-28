@@ -18,7 +18,7 @@ Example usage:
     ... )
 """
 
-__version__ = "0.1.0"
+__version__ = "1.0.0"
 
 import os
 import streamlit.components.v1 as components
@@ -77,6 +77,8 @@ class ChartConfig:
     y_label: str = ""
     width: int = 700
     height: int = 450
+    zoom_enabled: bool = False
+    read_only: bool = False
 
     def to_dict(self) -> dict:
         """Convert to dictionary for passing to chart_editor."""
@@ -90,6 +92,8 @@ class ChartConfig:
             "y_label": self.y_label,
             "width": self.width,
             "height": self.height,
+            "zoom_enabled": self.zoom_enabled,
+            "read_only": self.read_only,
         }
 
 
@@ -155,6 +159,9 @@ def chart_editor(
     min_points: int = 0,
     max_points: Optional[int] = None,
     on_change: Optional[Callable[[Lines], None]] = None,
+    zoom_enabled: bool = False,
+    read_only: bool = False,
+    on_zoom: Optional[Callable[[Tuple[float, float], Tuple[float, float]], None]] = None,
 ) -> Lines:
     """
     Create an interactive chart editor component.
@@ -212,6 +219,22 @@ def chart_editor(
     on_change : Callable[[Lines], None], optional
         Callback function called when the chart data changes.
         Receives the new lines data as argument.
+
+    zoom_enabled : bool, default False
+        If True, enables zoom and pan functionality:
+        - Mouse wheel to zoom in/out (centered on cursor)
+        - Ctrl+drag to pan (or just drag in read_only mode)
+        - Zoom control buttons (+, -, fit, reset)
+
+    read_only : bool, default False
+        If True, the chart displays data but doesn't allow editing points.
+        Combined with zoom_enabled, creates a view-only chart with zoom/pan.
+        Useful for output/result charts.
+
+    on_zoom : Callable[[Tuple[float, float], Tuple[float, float]], None], optional
+        Callback function called when the chart zoom changes.
+        Receives (x_range, y_range) as arguments.
+        Useful for synchronizing zoom across multiple charts.
 
     Returns
     -------
@@ -302,6 +325,8 @@ def chart_editor(
         disabled=disabled,
         minPoints=min_points,
         maxPoints=max_points,
+        zoomEnabled=zoom_enabled,
+        readOnly=read_only,
         key=key,
         default=prepared_lines,
     )
@@ -309,6 +334,25 @@ def chart_editor(
     # Convert back to list of tuples
     if component_value is None:
         result = [list(map(tuple, line)) for line in prepared_lines]
+    elif isinstance(component_value, dict) and component_value.get('type') == 'zoom':
+        # Zoom state returned - extract lines data if present to prevent data loss
+        zoom_lines = component_value.get('lines')
+        if zoom_lines is not None:
+            result = []
+            for line in zoom_lines:
+                if line:
+                    sorted_line = sorted(line, key=lambda p: p[0])
+                    result.append([(float(p[0]), float(p[1])) for p in sorted_line])
+                else:
+                    result.append([])
+        else:
+            # Fallback to prepared_lines if no lines in zoom event
+            result = [list(map(tuple, line)) for line in prepared_lines]
+        # Call on_zoom callback if provided
+        if on_zoom is not None:
+            zoom_x_range = tuple(component_value.get('xRange', x_range))
+            zoom_y_range = tuple(component_value.get('yRange', y_range))
+            on_zoom(zoom_x_range, zoom_y_range)
     else:
         result = []
         for line in component_value:
@@ -319,12 +363,14 @@ def chart_editor(
             else:
                 result.append([])
 
-    # Call on_change callback if data changed
+    # Call on_change callback if data changed (not for zoom events)
     if on_change is not None and component_value is not None:
-        # Check if data actually changed
-        old_data = [list(map(tuple, line)) for line in prepared_lines]
-        if result != old_data:
-            on_change(result)
+        # Skip zoom events
+        if not (isinstance(component_value, dict) and component_value.get('type') == 'zoom'):
+            # Check if data actually changed
+            old_data = [list(map(tuple, line)) for line in prepared_lines]
+            if result != old_data:
+                on_change(result)
 
     return result
 
