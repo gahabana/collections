@@ -1,6 +1,7 @@
 {
   "name": "chart-editor-component",
   "version": "2.0.0",
+  "type": "module",
   "description": "Interactive 2D chart editor component for Streamlit (TypeScript)",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",

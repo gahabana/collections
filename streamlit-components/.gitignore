@@ -43,9 +43,10 @@ yarn-error.log*
 
 # TypeScript
 *.tsbuildinfo
-build/
 chart_editor/frontend/build/
-chart_editor/frontend/dist/
+
+# Note: We commit dist/ as per migration strategy Option 2
+# (commit both TypeScript source and compiled JavaScript for Streamlit compatibility)
 
 # IDEs
 .vscode/

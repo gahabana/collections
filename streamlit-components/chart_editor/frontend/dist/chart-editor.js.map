@@ -1,0 +1,1 @@
+{"version":3,"file":"chart-editor.js","sources":["../src/index.ts"],"sourcesContent":[null],"names":["document","readyState","addEventListener","console","log"],"mappings":";+CAY4B,YAAxBA,SAASC,WACXD,SAASE,iBAAiB,mBAAoB,KAC5CC,QAAQC,IAAI,2CAGdD,QAAQC,IAAI,gEATZ,MAAO,oCACT"}
