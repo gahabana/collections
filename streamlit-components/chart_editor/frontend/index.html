@@ -841,6 +841,14 @@
                     initialYRange: null
                 };
 
+                // Smooth wheel zoom state
+                this.wheelZoom = {
+                    targetXRange: null,
+                    targetYRange: null,
+                    animationId: null,
+                    lastWheelTime: 0
+                };
+
                 DebugLog.log('EDITOR_INIT', 'ChartEditor initialized');
             }
 
@@ -2150,9 +2158,12 @@
                 // Determine zoom direction and factor
                 const zoomFactor = e.deltaY < 0 ? 0.9 : 1.1; // Scroll up = zoom in
 
-                // Calculate new ranges centered on cursor position
-                const xRangeSize = this.xRange[1] - this.xRange[0];
-                const yRangeSize = this.yRange[1] - this.yRange[0];
+                // Use target range if animation is in progress, otherwise current range
+                const baseXRange = this.wheelZoom.targetXRange || [...this.xRange];
+                const baseYRange = this.wheelZoom.targetYRange || [...this.yRange];
+
+                const xRangeSize = baseXRange[1] - baseXRange[0];
+                const yRangeSize = baseYRange[1] - baseYRange[0];
 
                 // Guard against division by zero
                 if (xRangeSize === 0 || yRangeSize === 0) return;
@@ -2161,8 +2172,8 @@
                 const newYRangeSize = yRangeSize * zoomFactor;
 
                 // Calculate cursor position as fraction of current range
-                const xFraction = (dataPos.x - this.xRange[0]) / xRangeSize;
-                const yFraction = (dataPos.y - this.yRange[0]) / yRangeSize;
+                const xFraction = (dataPos.x - baseXRange[0]) / xRangeSize;
+                const yFraction = (dataPos.y - baseYRange[0]) / yRangeSize;
 
                 // New range keeps cursor at same visual position
                 const newXMin = dataPos.x - xFraction * newXRangeSize;
@@ -2170,8 +2181,63 @@
                 const newYMin = dataPos.y - yFraction * newYRangeSize;
                 const newYMax = newYMin + newYRangeSize;
 
-                // Apply zoom with limits
-                this.setZoomRange(newXMin, newXMax, newYMin, newYMax);
+                // Update target for smooth animation
+                this.wheelZoom.targetXRange = [newXMin, newXMax];
+                this.wheelZoom.targetYRange = [newYMin, newYMax];
+                this.wheelZoom.lastWheelTime = performance.now();
+
+                // Start smooth zoom animation if not already running
+                if (!this.wheelZoom.animationId) {
+                    this.startWheelZoomAnimation();
+                }
+            }
+
+            startWheelZoomAnimation() {
+                const smoothingFactor = 0.15; // Lower = smoother but slower
+                const settleThreshold = 0.5; // Pixels threshold to stop animation
+                const idleTimeout = 150; // ms of no wheel events before settling
+
+                const animate = () => {
+                    if (!this.wheelZoom.targetXRange) {
+                        this.wheelZoom.animationId = null;
+                        return;
+                    }
+
+                    // Interpolate current range toward target
+                    const newXMin = this.xRange[0] + (this.wheelZoom.targetXRange[0] - this.xRange[0]) * smoothingFactor;
+                    const newXMax = this.xRange[1] + (this.wheelZoom.targetXRange[1] - this.xRange[1]) * smoothingFactor;
+                    const newYMin = this.yRange[0] + (this.wheelZoom.targetYRange[0] - this.yRange[0]) * smoothingFactor;
+                    const newYMax = this.yRange[1] + (this.wheelZoom.targetYRange[1] - this.yRange[1]) * smoothingFactor;
+
+                    // Check if we've essentially reached the target
+                    const xDiff = Math.abs(newXMax - newXMin - (this.wheelZoom.targetXRange[1] - this.wheelZoom.targetXRange[0]));
+                    const yDiff = Math.abs(newYMax - newYMin - (this.wheelZoom.targetYRange[1] - this.wheelZoom.targetYRange[0]));
+                    const timeSinceLastWheel = performance.now() - this.wheelZoom.lastWheelTime;
+
+                    // Apply the interpolated zoom (without notification during animation)
+                    this.setZoomRange(newXMin, newXMax, newYMin, newYMax, false);
+
+                    // Check if we should stop the animation
+                    if (xDiff < settleThreshold && yDiff < settleThreshold && timeSinceLastWheel > idleTimeout) {
+                        // Snap to final target and notify
+                        this.setZoomRange(
+                            this.wheelZoom.targetXRange[0],
+                            this.wheelZoom.targetXRange[1],
+                            this.wheelZoom.targetYRange[0],
+                            this.wheelZoom.targetYRange[1],
+                            true
+                        );
+                        this.wheelZoom.targetXRange = null;
+                        this.wheelZoom.targetYRange = null;
+                        this.wheelZoom.animationId = null;
+                        return;
+                    }
+
+                    // Continue animation
+                    this.wheelZoom.animationId = requestAnimationFrame(animate);
+                };
+
+                this.wheelZoom.animationId = requestAnimationFrame(animate);
             }
 
             setZoomRange(xMin, xMax, yMin, yMax, notify = true) {
