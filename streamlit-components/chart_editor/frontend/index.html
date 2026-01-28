@@ -1956,6 +1956,14 @@
                     points.forEach(p => overlappingSet.add(`${p.lineIndex},${p.pointIndex}`));
                 });
 
+                // Set up clipping region to prevent lines from drawing outside chart area
+                const chartWidth = this.canvas.width - this.padding.left - this.padding.right;
+                const chartHeight = this.canvas.height - this.padding.top - this.padding.bottom;
+                ctx.save();
+                ctx.beginPath();
+                ctx.rect(this.padding.left, this.padding.top, chartWidth, chartHeight);
+                ctx.clip();
+
                 // Create draw order: active line last (on top)
                 const drawOrder = [];
                 for (let i = 0; i < this.lines.length; i++) {
@@ -2076,6 +2084,9 @@
                         ctx.fillText(lineCount.toString(), badgeX, badgeY);
                     }
                 });
+
+                // Restore canvas state (remove clipping)
+                ctx.restore();
             }
 
             drawGrid() {
