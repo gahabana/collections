@@ -11,8 +11,6 @@
 
 import type {
   Lines,
-  Line,
-  Point,
   PointReference,
   ChartConfig,
   RangeTuple,
@@ -26,8 +24,7 @@ import {
   ZOOM,
   HISTORY,
   KEYBOARD,
-  COLORS,
-  EASING
+  COLORS
 } from '../types/index.js';
 
 import {
@@ -35,7 +32,6 @@ import {
   applyGridSnap,
   hasConflictingX,
   sortLineByX,
-  areLinesEqual,
   dataToCanvas,
   canvasToData,
   isInChartArea,
@@ -68,7 +64,6 @@ export class ChartEditor {
 
   // Data state
   private lines: Lines = [];
-  private savedLines: Lines = [];
 
   // Ranges
   private xRange: RangeTuple = [0, 100];
@@ -90,7 +85,6 @@ export class ChartEditor {
 
   // Zoom state
   private zoomLevel: number = 1;
-  private zoomAnimationId: number | null = null;
 
   // Pan state
   private isPanning: boolean = false;
@@ -113,18 +107,8 @@ export class ChartEditor {
     pinchCenter: null as { x: number; y: number } | null
   };
 
-  // Range selector state
-  private rangeSelector = {
-    enabled: false,
-    dragging: null as 'viewport' | 'left' | 'right' | null,
-    dragStartX: 0,
-    dragStartLeft: 0,
-    dragStartWidth: 0
-  };
-
   // Visual constants
   private readonly padding = CANVAS_PADDING;
-  private readonly dotRadius = VISUAL.DOT_RADIUS;
   private readonly hoverRadius = VISUAL.HOVER_RADIUS;
 
   // Callbacks
@@ -196,7 +180,6 @@ export class ChartEditor {
     this.lines = config.lines.map(line =>
       line.map(p => ({ x: p.x, y: p.y }))
     );
-    this.savedLines = deepCloneLines(this.lines);
 
     // Ensure at least one line exists
     if (this.lines.length === 0) {
@@ -354,9 +337,7 @@ export class ChartEditor {
    * Save changes and exit edit mode
    */
   saveChanges(): void {
-    const serialized = this.lines.map(line => line.map(p => [p.x, p.y]));
     setComponentValue(this.lines);
-    this.savedLines = deepCloneLines(this.lines);
     this.isEditing = false;
     this.canvas.classList.remove('editing');
     debugLogger.log('CHANGES_SAVED', { lines: this.lines.length });
@@ -892,9 +873,302 @@ export class ChartEditor {
     });
   }
 
-  // Placeholder methods (keyboard and touch handlers next)
-  private handleKeyDown(_e: KeyboardEvent): void { /* TODO */ }
-  private handleTouchStart(_e: TouchEvent): void { /* TODO */ }
-  private handleTouchMove(_e: TouchEvent): void { /* TODO */ }
-  private handleTouchEnd(_e: TouchEvent): void { /* TODO */ }
+  // ============================================
+  // KEYBOARD EVENT HANDLERS
+  // ============================================
+
+  private handleKeyDown(e: KeyboardEvent): void {
+    // Handle undo/redo shortcuts (always available if not disabled)
+    if ((e.ctrlKey || e.metaKey) && !this.disabled && !this.readOnly) {
+      if (e.key === 'z' && !e.shiftKey) {
+        e.preventDefault();
+        if (this.undo()) {
+          this.enterEditMode();
+        }
+        return;
+      }
+      if ((e.key === 'z' && e.shiftKey) || e.key === 'y') {
+        e.preventDefault();
+        if (this.redo()) {
+          this.enterEditMode();
+        }
+        return;
+      }
+    }
+
+    // Block keyboard interactions if disabled or read-only (except Escape)
+    if (this.disabled && e.key !== 'Escape') return;
+
+    const activeLine = this.lines[this.activeLineIndex] || [];
+
+    switch (e.key) {
+      case 'Tab':
+        // Cycle through points
+        e.preventDefault();
+        if (activeLine.length === 0) return;
+
+        if (this.selectedPoint === null || this.selectedPoint.lineIndex !== this.activeLineIndex) {
+          // Select first point
+          this.selectedPoint = { lineIndex: this.activeLineIndex, pointIndex: 0 };
+        } else if (e.shiftKey) {
+          // Previous point
+          this.selectedPoint.pointIndex--;
+          if (this.selectedPoint.pointIndex < 0) {
+            this.selectedPoint.pointIndex = activeLine.length - 1;
+          }
+        } else {
+          // Next point
+          this.selectedPoint.pointIndex++;
+          if (this.selectedPoint.pointIndex >= activeLine.length) {
+            this.selectedPoint.pointIndex = 0;
+          }
+        }
+        debugLogger.log('KEYBOARD_SELECT', { point: (this.selectedPoint.pointIndex + 1) });
+        this.draw();
+        break;
+
+      case 'ArrowLeft':
+      case 'ArrowRight':
+      case 'ArrowUp':
+      case 'ArrowDown':
+        // Move selected point
+        if (this.readOnly || this.selectedPoint === null) return;
+        e.preventDefault();
+
+        const point = activeLine[this.selectedPoint.pointIndex];
+        if (!point) return;
+
+        const xRangeSize = this.xRange[1] - this.xRange[0];
+        const yRangeSize = this.yRange[1] - this.yRange[0];
+        const stepSize = e.shiftKey ? KEYBOARD.LARGE_STEP_PERCENT : KEYBOARD.SMALL_STEP_PERCENT;
+
+        let newX = point.x;
+        let newY = point.y;
+
+        if (e.key === 'ArrowLeft') newX -= xRangeSize * stepSize;
+        if (e.key === 'ArrowRight') newX += xRangeSize * stepSize;
+        if (e.key === 'ArrowDown') newY -= yRangeSize * stepSize;
+        if (e.key === 'ArrowUp') newY += yRangeSize * stepSize;
+
+        // Check for X conflicts
+        if (hasConflictingX(activeLine, newX, this.selectedPoint.pointIndex, VISUAL.OVERLAP_THRESHOLD)) {
+          debugLogger.warn('KEYBOARD_MOVE_BLOCKED', 'X too close to existing point');
+          return;
+        }
+
+        this.enterEditMode();
+        point.x = newX;
+        point.y = newY;
+        sortLineByX(activeLine);
+        this.selectedPoint.pointIndex = activeLine.indexOf(point);
+        this.pushHistory();
+        this.draw();
+
+        debugLogger.log('KEYBOARD_MOVE', {
+          point: this.selectedPoint.pointIndex + 1,
+          coords: { x: newX.toFixed(2), y: newY.toFixed(2) }
+        });
+        break;
+
+      case 'Delete':
+      case 'Backspace':
+        // Remove selected point
+        if (this.readOnly || this.selectedPoint === null) return;
+        e.preventDefault();
+
+        // Check min points constraint
+        if (this.minPoints > 0 && activeLine.length <= this.minPoints) {
+          debugLogger.warn('DELETE_BLOCKED', { reason: 'Min points constraint', minPoints: this.minPoints });
+          return;
+        }
+
+        const removedPoint = activeLine[this.selectedPoint.pointIndex];
+        if (!removedPoint) return;
+
+        activeLine.splice(this.selectedPoint.pointIndex, 1);
+
+        debugLogger.log('KEYBOARD_DELETE', {
+          coords: { x: removedPoint.x.toFixed(2), y: removedPoint.y.toFixed(2) },
+          remaining: activeLine.length
+        });
+
+        this.enterEditMode();
+        this.pushHistory();
+
+        if (activeLine.length === 0) {
+          this.selectedPoint = null;
+        } else if (this.selectedPoint.pointIndex >= activeLine.length) {
+          this.selectedPoint.pointIndex = activeLine.length - 1;
+        }
+
+        this.draw();
+        break;
+
+      case 'Enter':
+      case ' ':
+        // Add point at center
+        if (this.readOnly) return;
+        e.preventDefault();
+
+        // Check max points constraint
+        if (this.maxPoints !== null && activeLine.length >= this.maxPoints) {
+          debugLogger.warn('ADD_BLOCKED', { reason: 'Max points', maxPoints: this.maxPoints });
+          return;
+        }
+
+        const centerX = (this.xRange[0] + this.xRange[1]) / 2;
+        const centerY = (this.yRange[0] + this.yRange[1]) / 2;
+        const centerPoint = { x: centerX, y: centerY };
+
+        if (hasConflictingX(activeLine, centerX, -1, VISUAL.OVERLAP_THRESHOLD)) {
+          debugLogger.warn('ADD_BLOCKED', 'Center X conflicts with existing point');
+          return;
+        }
+
+        activeLine.push(centerPoint);
+        sortLineByX(activeLine);
+        const newPointIndex = activeLine.indexOf(centerPoint);
+
+        this.enterEditMode();
+        this.pushHistory();
+        this.selectedPoint = { lineIndex: this.activeLineIndex, pointIndex: newPointIndex };
+
+        debugLogger.log('KEYBOARD_ADD', {
+          coords: { x: centerX.toFixed(2), y: centerY.toFixed(2) },
+          totalPoints: activeLine.length
+        });
+        this.draw();
+        break;
+
+      case 'Escape':
+        // Deselect point
+        this.selectedPoint = null;
+        debugLogger.log('KEYBOARD_DESELECT', 'Point deselected');
+        this.draw();
+        break;
+    }
+  }
+
+  // ============================================
+  // TOUCH EVENT HANDLERS
+  // ============================================
+
+  private handleTouchStart(e: TouchEvent): void {
+    e.preventDefault();
+
+    if (e.touches.length === 1) {
+      // Single touch - treat like mouse down
+      const touch = e.touches[0];
+      if (!touch) return;
+
+      this.handleMouseDown({
+        clientX: touch.clientX,
+        clientY: touch.clientY,
+        button: 0,
+        ctrlKey: false,
+        metaKey: false
+      } as MouseEvent);
+    } else if (e.touches.length === 2 && this.zoomEnabled) {
+      // Two finger pinch - start zoom gesture
+      const touch1 = e.touches[0];
+      const touch2 = e.touches[1];
+      if (!touch1 || !touch2) return;
+
+      this.touchState.initialPinchDistance = getPinchDistance(touch1, touch2);
+      this.touchState.initialZoomLevel = this.zoomLevel;
+      this.touchState.initialXRange = [...this.xRange];
+      this.touchState.initialYRange = [...this.yRange];
+      this.touchState.pinchCenter = getPinchCenter(touch1, touch2, this.canvas);
+
+      // Cancel any ongoing drag
+      this.isDragging = false;
+      this.draggingPoint = null;
+      this.isPanning = false;
+
+      debugLogger.log('PINCH_START', {
+        distance: this.touchState.initialPinchDistance.toFixed(0),
+        center: this.touchState.pinchCenter
+      });
+    }
+  }
+
+  private handleTouchMove(e: TouchEvent): void {
+    e.preventDefault();
+
+    if (e.touches.length === 1 && !this.touchState.initialPinchDistance) {
+      // Single touch - treat like mouse move
+      const touch = e.touches[0];
+      if (!touch) return;
+
+      this.handleMouseMove({
+        clientX: touch.clientX,
+        clientY: touch.clientY
+      } as MouseEvent);
+    } else if (e.touches.length === 2 && this.zoomEnabled && this.touchState.initialPinchDistance) {
+      // Pinch zoom
+      const touch1 = e.touches[0];
+      const touch2 = e.touches[1];
+      if (!touch1 || !touch2) return;
+
+      const currentDistance = getPinchDistance(touch1, touch2);
+      const scale = currentDistance / this.touchState.initialPinchDistance;
+
+      if (!this.touchState.initialXRange || !this.touchState.initialYRange || !this.touchState.pinchCenter) return;
+
+      // Calculate new ranges (zoom centered on pinch center)
+      const centerPos = canvasToData(
+        this.touchState.pinchCenter,
+        this.touchState.initialXRange,
+        this.touchState.initialYRange,
+        this.canvas.width,
+        this.canvas.height,
+        this.padding
+      );
+
+      const initialXSize = this.touchState.initialXRange[1] - this.touchState.initialXRange[0];
+      const initialYSize = this.touchState.initialYRange[1] - this.touchState.initialYRange[0];
+
+      const newXSize = initialXSize / scale;
+      const newYSize = initialYSize / scale;
+
+      // Calculate new ranges centered on pinch center
+      const xFraction = (centerPos.x - this.touchState.initialXRange[0]) / initialXSize;
+      const yFraction = (centerPos.y - this.touchState.initialYRange[0]) / initialYSize;
+
+      const newXMin = centerPos.x - xFraction * newXSize;
+      const newXMax = newXMin + newXSize;
+      const newYMin = centerPos.y - yFraction * newYSize;
+      const newYMax = newYMin + newYSize;
+
+      this.setZoomRange(newXMin, newXMax, newYMin, newYMax, false);
+    }
+  }
+
+  private handleTouchEnd(e: TouchEvent): void {
+    if (this.touchState.initialPinchDistance && e.touches.length < 2) {
+      // End pinch zoom
+      debugLogger.log('PINCH_END', {
+        zoomLevel: this.zoomLevel.toFixed(2)
+      });
+
+      // Send final zoom state
+      if (this.zoomEnabled) {
+        sendZoomState(this.lines, this.xRange, this.yRange, this.zoomLevel);
+      }
+
+      this.touchState.initialPinchDistance = null;
+      this.touchState.initialXRange = null;
+      this.touchState.initialYRange = null;
+      this.touchState.pinchCenter = null;
+    }
+
+    if (e.touches.length === 0) {
+      // All touches ended - treat like mouse up
+      const lastTouch = e.changedTouches[0];
+      this.handleMouseUp({
+        clientX: lastTouch?.clientX || 0,
+        clientY: lastTouch?.clientY || 0
+      } as MouseEvent);
+    }
+  }
 }

@@ -3,7 +3,7 @@
  * Canvas rendering functions
  */
 
-import type { Lines, Point, PointReference, RangeTuple, Padding, ColorList } from '../types/index.js';
+import type { Lines, Point, PointReference, RangeTuple, Padding } from '../types/index.js';
 import { VISUAL, COLORS } from '../types/index.js';
 import { dataToCanvas } from '../utils/index.js';
 
@@ -54,8 +54,8 @@ export function findOverlappingPoints(
  */
 export function drawGrid(
   ctx: CanvasRenderingContext2D,
-  xRange: RangeTuple,
-  yRange: RangeTuple,
+  _xRange: RangeTuple,
+  _yRange: RangeTuple,
   canvasWidth: number,
   canvasHeight: number,
   padding: Padding
