@@ -2147,8 +2147,8 @@
                 // Get data coordinates at cursor position (zoom center)
                 const dataPos = this.canvasToData(canvasX, canvasY);
 
-                // Determine zoom direction and factor
-                const zoomFactor = e.deltaY < 0 ? 0.9 : 1.1; // Scroll up = zoom in
+                // Determine zoom direction and factor (0.97/1.03 = 3% per tick for gentler zoom)
+                const zoomFactor = e.deltaY < 0 ? 0.97 : 1.03; // Scroll up = zoom in
 
                 // Calculate new ranges centered on cursor position
                 const xRangeSize = this.xRange[1] - this.xRange[0];
