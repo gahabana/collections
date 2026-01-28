@@ -1,0 +1,2731 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Chart Editor</title>
+    <style>
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, sans-serif;
+            background: transparent;
+        }
+
+        .chart-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding: 10px;
+        }
+
+        .chart-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .chart-wrapper {
+            position: relative;
+            display: flex;
+            align-items: center;
+        }
+
+        .y-label {
+            writing-mode: vertical-rl;
+            text-orientation: mixed;
+            transform: rotate(180deg);
+            font-size: 12px;
+            color: #666;
+            margin-right: 5px;
+        }
+
+        .chart-area {
+            display: flex;
+            flex-direction: column;
+        }
+
+        #chartCanvas {
+            border: 2px solid #ddd;
+            border-radius: 4px;
+            cursor: crosshair;
+            background: #fafafa;
+            transition: border-color 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        #chartCanvas.editing {
+            border-color: #4ECDC4;
+            box-shadow: 0 0 8px rgba(78, 205, 196, 0.4);
+        }
+
+        #chartCanvas.error-flash {
+            border-color: #FF6B6B;
+            box-shadow: 0 0 10px rgba(255, 107, 107, 0.5);
+        }
+
+        #chartCanvas.disabled {
+            opacity: 0.7;
+            cursor: not-allowed !important;
+        }
+
+        #chartCanvas.read-only {
+            cursor: grab;
+        }
+
+        #chartCanvas.read-only.panning {
+            cursor: grabbing;
+        }
+
+        /* Zoom controls - hidden by default, range selector provides zoom */
+        .zoom-controls {
+            display: none;
+        }
+
+        .zoom-controls.hidden {
+            display: none;
+        }
+
+        .zoom-btn {
+            padding: 6px 12px;
+            background: #f0f0f0;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: bold;
+            min-width: 36px;
+        }
+
+        .zoom-btn:hover {
+            background: #e0e0e0;
+        }
+
+        .zoom-btn:active {
+            background: #d0d0d0;
+        }
+
+        .zoom-info {
+            font-size: 11px;
+            color: #666;
+            margin-left: 10px;
+        }
+
+        /* Range Selector (X-axis zoom brush) */
+        .range-selector {
+            position: relative;
+            height: 24px;
+            margin-top: 4px;
+            margin-left: 50px;
+            margin-right: 20px;
+            background: linear-gradient(to bottom, #f8f8f8, #eee);
+            border: 1px solid #ccc;
+            border-radius: 3px;
+            cursor: default;
+            user-select: none;
+        }
+
+        .range-selector.hidden {
+            display: none;
+        }
+
+        .range-selector-track {
+            position: absolute;
+            top: 4px;
+            left: 0;
+            right: 0;
+            height: 16px;
+            background: #ddd;
+            border-radius: 2px;
+            overflow: hidden;
+        }
+
+        .range-selector-viewport {
+            position: absolute;
+            top: 0;
+            height: 100%;
+            background: linear-gradient(to bottom, rgba(78, 205, 196, 0.4), rgba(78, 205, 196, 0.2));
+            border-left: 2px solid #4ECDC4;
+            border-right: 2px solid #4ECDC4;
+            cursor: grab;
+            min-width: 20px;
+        }
+
+        .range-selector-viewport:hover {
+            background: linear-gradient(to bottom, rgba(78, 205, 196, 0.5), rgba(78, 205, 196, 0.3));
+        }
+
+        .range-selector-viewport:active {
+            cursor: grabbing;
+        }
+
+        .range-selector-handle {
+            position: absolute;
+            top: 0;
+            width: 8px;
+            height: 100%;
+            background: #4ECDC4;
+            cursor: ew-resize;
+            transition: background 0.15s;
+        }
+
+        .range-selector-handle:hover {
+            background: #3dbdb5;
+        }
+
+        .range-selector-handle::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 2px;
+            height: 8px;
+            background: rgba(255,255,255,0.7);
+            border-radius: 1px;
+        }
+
+        .range-selector-handle.left {
+            left: -4px;
+            border-radius: 2px 0 0 2px;
+        }
+
+        .range-selector-handle.right {
+            right: -4px;
+            border-radius: 0 2px 2px 0;
+        }
+
+        .range-selector-label {
+            display: none;
+        }
+
+        .error-message {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(255, 107, 107, 0.95);
+            color: white;
+            padding: 8px 16px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 500;
+            pointer-events: none;
+            opacity: 0;
+            transition: opacity 0.2s ease;
+            z-index: 200;
+        }
+
+        .error-message.visible {
+            opacity: 1;
+        }
+
+        .x-label {
+            font-size: 12px;
+            color: #666;
+            text-align: center;
+            margin-top: 5px;
+        }
+
+        /* Edit mode controls */
+        .edit-controls {
+            display: flex;
+            gap: 10px;
+            margin-top: 10px;
+            align-items: center;
+        }
+
+        .edit-controls.hidden {
+            display: none;
+        }
+
+        .edit-status {
+            font-size: 12px;
+            color: #4ECDC4;
+            font-weight: 500;
+        }
+
+        .btn-save {
+            padding: 6px 16px;
+            background: #4ECDC4;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 500;
+        }
+
+        .btn-save:hover {
+            background: #3dbdb5;
+        }
+
+        .btn-cancel {
+            padding: 6px 16px;
+            background: #f0f0f0;
+            color: #666;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 12px;
+        }
+
+        .btn-cancel:hover {
+            background: #e0e0e0;
+        }
+
+        .controls {
+            display: flex;
+            gap: 15px;
+            margin-top: 15px;
+            flex-wrap: wrap;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .control-group {
+            display: flex;
+            align-items: center;
+            gap: 5px;
+        }
+
+        .control-group label {
+            font-size: 12px;
+            color: #555;
+        }
+
+        .control-group input {
+            width: 70px;
+            padding: 4px 8px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+
+        .control-group input:focus {
+            outline: none;
+            border-color: #4ECDC4;
+        }
+
+        .control-group input.invalid {
+            border-color: #FF6B6B;
+            background-color: #fff5f5;
+        }
+
+        .line-selector {
+            display: flex;
+            gap: 8px;
+            margin-top: 10px;
+        }
+
+        .line-btn {
+            padding: 6px 12px;
+            border: 2px solid;
+            border-radius: 4px;
+            background: white;
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 500;
+            transition: all 0.2s;
+        }
+
+        .line-btn.active {
+            color: white;
+        }
+
+        .line-btn:hover {
+            opacity: 0.8;
+        }
+
+        .add-line-btn {
+            padding: 6px 12px;
+            border: 2px dashed #999;
+            border-radius: 4px;
+            background: white;
+            cursor: pointer;
+            font-size: 12px;
+            color: #666;
+            transition: all 0.2s;
+        }
+
+        .add-line-btn:hover {
+            border-color: #4ECDC4;
+            color: #4ECDC4;
+        }
+
+        .tooltip {
+            position: absolute;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            pointer-events: none;
+            z-index: 100;
+            white-space: nowrap;
+        }
+
+        .instructions {
+            font-size: 11px;
+            color: #888;
+            margin-top: 10px;
+            text-align: center;
+        }
+
+        /* Debug toggle button */
+        .debug-toggle {
+            margin-top: 10px;
+            padding: 4px 10px;
+            font-size: 11px;
+            color: #666;
+            background: #f0f0f0;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+
+        .debug-toggle:hover {
+            background: #e0e0e0;
+        }
+
+        .debug-toggle.active {
+            background: #4ECDC4;
+            color: white;
+            border-color: #4ECDC4;
+        }
+
+        /* Debug log styles */
+        .debug-log {
+            margin-top: 15px;
+            padding: 10px;
+            background: #1e1e1e;
+            border-radius: 4px;
+            max-height: 150px;
+            overflow-y: auto;
+            font-family: 'Monaco', 'Menlo', monospace;
+            font-size: 11px;
+            width: 100%;
+            max-width: 700px;
+        }
+
+        .debug-log.hidden {
+            display: none;
+        }
+
+        .debug-log .log-entry {
+            padding: 2px 0;
+            border-bottom: 1px solid #333;
+        }
+
+        .debug-log .log-entry:last-child {
+            border-bottom: none;
+        }
+
+        .debug-log .timestamp {
+            color: #888;
+        }
+
+        .debug-log .action {
+            color: #4ECDC4;
+            font-weight: bold;
+        }
+
+        .debug-log .data {
+            color: #FFEAA7;
+        }
+
+        .debug-log .info {
+            color: #74b9ff;
+        }
+
+        .debug-log .warn {
+            color: #fdcb6e;
+        }
+
+        /* Dark mode support */
+        @media (prefers-color-scheme: dark) {
+            body {
+                background: transparent;
+            }
+
+            .chart-container {
+                background: transparent;
+            }
+
+            .chart-title {
+                color: #e0e0e0;
+            }
+
+            .y-label,
+            .x-label {
+                color: #a0a0a0;
+            }
+
+            #chartCanvas {
+                border-color: #444;
+                background: #1e1e1e;
+            }
+
+            #chartCanvas.editing {
+                border-color: #4ECDC4;
+                box-shadow: 0 0 8px rgba(78, 205, 196, 0.5);
+            }
+
+            #chartCanvas.error-flash {
+                border-color: #FF6B6B;
+                box-shadow: 0 0 10px rgba(255, 107, 107, 0.6);
+            }
+
+            .range-selector {
+                background: linear-gradient(to bottom, #2a2a2a, #1e1e1e);
+                border-color: #444;
+            }
+
+            .range-selector-track {
+                background: #333;
+            }
+
+            .range-selector-viewport {
+                background: linear-gradient(to bottom, rgba(78, 205, 196, 0.3), rgba(78, 205, 196, 0.15));
+            }
+
+            .zoom-btn {
+                background: #2a2a2a;
+                border-color: #444;
+                color: #e0e0e0;
+            }
+
+            .zoom-btn:hover {
+                background: #333;
+            }
+
+            .zoom-btn:active {
+                background: #444;
+            }
+
+            .zoom-info {
+                color: #a0a0a0;
+            }
+
+            .edit-controls {
+                background: transparent;
+            }
+
+            .btn-cancel {
+                background: #2a2a2a;
+                border-color: #444;
+                color: #a0a0a0;
+            }
+
+            .btn-cancel:hover {
+                background: #333;
+            }
+
+            .control-group label {
+                color: #a0a0a0;
+            }
+
+            .control-group input {
+                background: #2a2a2a;
+                border-color: #444;
+                color: #e0e0e0;
+            }
+
+            .control-group input:focus {
+                border-color: #4ECDC4;
+            }
+
+            .control-group input.invalid {
+                border-color: #FF6B6B;
+                background-color: #3a2020;
+            }
+
+            .line-btn {
+                background: #1e1e1e;
+            }
+
+            .add-line-btn {
+                background: #1e1e1e;
+                border-color: #666;
+                color: #a0a0a0;
+            }
+
+            .add-line-btn:hover {
+                border-color: #4ECDC4;
+                color: #4ECDC4;
+            }
+
+            .tooltip {
+                background: rgba(255, 255, 255, 0.9);
+                color: #1e1e1e;
+            }
+
+            .instructions {
+                color: #666;
+            }
+
+            .debug-toggle {
+                background: #2a2a2a;
+                border-color: #444;
+                color: #a0a0a0;
+            }
+
+            .debug-toggle:hover {
+                background: #333;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="chart-container">
+        <div class="chart-title" id="chartTitle"></div>
+        <div class="chart-wrapper">
+            <div class="y-label" id="yLabel"></div>
+            <div class="chart-area" style="position: relative;">
+                <canvas id="chartCanvas"></canvas>
+                <div class="error-message" id="errorMessage">Cannot add point - X too close to existing point</div>
+                <div class="x-label" id="xLabel"></div>
+                <div class="range-selector hidden" id="rangeSelector">
+                    <div class="range-selector-track">
+                        <div class="range-selector-viewport" id="rangeSelectorViewport">
+                            <div class="range-selector-handle left" id="rangeHandleLeft"></div>
+                            <div class="range-selector-handle right" id="rangeHandleRight"></div>
+                        </div>
+                    </div>
+                    <span class="range-selector-label left" id="rangeLabelLeft">0</span>
+                    <span class="range-selector-label center" id="rangeLabelCenter">Drag to zoom</span>
+                    <span class="range-selector-label right" id="rangeLabelRight">100</span>
+                </div>
+            </div>
+        </div>
+        <div class="edit-controls hidden" id="editControls">
+            <button class="zoom-btn" id="btnUndo" title="Undo (Ctrl+Z)" style="opacity: 0.5;">↶</button>
+            <button class="zoom-btn" id="btnRedo" title="Redo (Ctrl+Shift+Z)" style="opacity: 0.5;">↷</button>
+            <span class="edit-status">Unsaved changes</span>
+            <button class="btn-save" id="btnSave">Save</button>
+            <button class="btn-cancel" id="btnCancel">Cancel</button>
+        </div>
+        <div class="zoom-controls hidden" id="zoomControls">
+            <button class="zoom-btn" id="btnZoomIn" title="Zoom In">+</button>
+            <button class="zoom-btn" id="btnZoomOut" title="Zoom Out">−</button>
+            <button class="zoom-btn" id="btnFitData" title="Fit to Data">⊡</button>
+            <button class="zoom-btn" id="btnResetZoom" title="Reset Zoom">↺</button>
+            <span class="zoom-info" id="zoomInfo">100%</span>
+        </div>
+        <div class="line-selector" id="lineSelector"></div>
+        <div class="controls">
+            <div class="control-group">
+                <label>X Min:</label>
+                <input type="number" id="xMin" step="any">
+            </div>
+            <div class="control-group">
+                <label>X Max:</label>
+                <input type="number" id="xMax" step="any">
+            </div>
+            <div class="control-group">
+                <label>Y Min:</label>
+                <input type="number" id="yMin" step="any">
+            </div>
+            <div class="control-group">
+                <label>Y Max:</label>
+                <input type="number" id="yMax" step="any">
+            </div>
+        </div>
+        <div class="instructions">
+            Click to add point | Click point to remove | Drag point to move
+        </div>
+        <button class="debug-toggle" id="debugToggle">Show Debug Log</button>
+        <div class="debug-log hidden" id="debugLog"></div>
+    </div>
+    <div class="tooltip" id="tooltip" style="display: none;"></div>
+
+    <script>
+        // ============================================
+        // DEBUG LOGGING SYSTEM
+        // ============================================
+        const DebugLog = {
+            maxEntries: 50,
+            entries: [],
+            visible: false,
+
+            log(action, data, type = 'info') {
+                const timestamp = new Date().toLocaleTimeString('en-US', {
+                    hour12: false,
+                    hour: '2-digit',
+                    minute: '2-digit',
+                    second: '2-digit',
+                    fractionalSecondDigits: 3
+                });
+
+                const entry = { timestamp, action, data, type };
+                this.entries.push(entry);
+
+                if (this.entries.length > this.maxEntries) {
+                    this.entries.shift();
+                }
+
+                this.render();
+                console.log(`[${timestamp}] ${action}:`, data);
+            },
+
+            render() {
+                const container = document.getElementById('debugLog');
+                if (!container) return;
+
+                container.innerHTML = this.entries.map(e => {
+                    const dataStr = typeof e.data === 'object' ? JSON.stringify(e.data) : e.data;
+                    return `<div class="log-entry">
+                        <span class="timestamp">[${e.timestamp}]</span>
+                        <span class="action">${e.action}</span>:
+                        <span class="${e.type}">${dataStr}</span>
+                    </div>`;
+                }).join('');
+
+                container.scrollTop = container.scrollHeight;
+            },
+
+            toggle() {
+                this.visible = !this.visible;
+                const logEl = document.getElementById('debugLog');
+                const toggleBtn = document.getElementById('debugToggle');
+
+                if (this.visible) {
+                    logEl.classList.remove('hidden');
+                    toggleBtn.textContent = 'Hide Debug Log';
+                    toggleBtn.classList.add('active');
+                } else {
+                    logEl.classList.add('hidden');
+                    toggleBtn.textContent = 'Show Debug Log';
+                    toggleBtn.classList.remove('active');
+                }
+
+                setTimeout(() => {
+                    sendMessageToStreamlit("streamlit:setFrameHeight", {height: document.body.scrollHeight});
+                }, 50);
+            }
+        };
+
+        // ============================================
+        // STREAMLIT COMPONENT COMMUNICATION
+        // ============================================
+        function sendMessageToStreamlit(type, data) {
+            const outData = Object.assign({
+                isStreamlitMessage: true,
+                type: type,
+            }, data);
+            window.parent.postMessage(outData, "*");
+        }
+
+        function setComponentReady() {
+            sendMessageToStreamlit("streamlit:componentReady", {apiVersion: 1});
+            DebugLog.log('COMPONENT_READY', 'Sent ready signal to Streamlit');
+        }
+
+        function setFrameHeight(height) {
+            sendMessageToStreamlit("streamlit:setFrameHeight", {height: height});
+        }
+
+        function setComponentValue(value) {
+            sendMessageToStreamlit("streamlit:setComponentValue", {value: value});
+            DebugLog.log('SAVED_TO_PYTHON', value, 'data');
+        }
+
+        // ============================================
+        // DEEP CLONE UTILITY
+        // ============================================
+        function deepCloneLines(lines) {
+            return lines.map(line => line.map(p => ({x: p.x, y: p.y})));
+        }
+
+        // ============================================
+        // CHART EDITOR CLASS
+        // ============================================
+        class ChartEditor {
+            constructor(canvas) {
+                this.canvas = canvas;
+                this.ctx = canvas.getContext('2d');
+
+                // Configuration
+                this.padding = { top: 20, right: 20, bottom: 30, left: 50 };
+                this.dotRadius = 8;
+                this.hoverRadius = 12;
+                this.lineWidth = 2;
+
+                // State
+                this.lines = [];
+                this.savedLines = [];  // Last saved state (for cancel)
+                this.isEditing = false;  // Are there unsaved changes?
+                this.colors = ["#FF6B6B", "#4ECDC4", "#45B7D1"];
+                this.xRange = [0, 100];
+                this.yRange = [0, 1000];
+                this.gridSnap = null;
+                this.activeLineIndex = 0;
+
+                // Constraints
+                this.disabled = false;
+                this.minPoints = 0;
+                this.maxPoints = null;
+
+                // Zoom/pan state
+                this.zoomEnabled = false;
+                this.readOnly = false;
+                this.originalXRange = [0, 100];
+                this.originalYRange = [0, 1000];
+                this.zoomLevel = 1;
+                this.isPanning = false;
+                this.panStartX = 0;
+                this.panStartY = 0;
+                this.panStartXRange = null;
+                this.panStartYRange = null;
+                this.onZoomCallback = null;
+
+                // Range selector state
+                this.rangeSelector = {
+                    enabled: false,
+                    dragging: null, // 'viewport', 'left', 'right', or null
+                    startX: 0,
+                    startLeft: 0,
+                    startRight: 0,
+                };
+
+                // Interaction state
+                this.hoveredPoint = null;
+                this.draggingPoint = null;
+                this.isDragging = false;
+
+                // Keyboard navigation state
+                this.selectedPoint = null; // {lineIndex, pointIndex}
+
+                // Undo/redo history
+                this.historyStack = [];
+                this.historyIndex = -1;
+                this.maxHistorySize = 50;
+
+                // Bind event handlers
+                this.handleMouseMove = this.handleMouseMove.bind(this);
+                this.handleMouseDown = this.handleMouseDown.bind(this);
+                this.handleMouseUp = this.handleMouseUp.bind(this);
+                this.handleMouseLeave = this.handleMouseLeave.bind(this);
+                this.handleWheel = this.handleWheel.bind(this);
+                this.handleKeyDown = this.handleKeyDown.bind(this);
+                this.handleTouchStart = this.handleTouchStart.bind(this);
+                this.handleTouchMove = this.handleTouchMove.bind(this);
+                this.handleTouchEnd = this.handleTouchEnd.bind(this);
+
+                // Attach events
+                canvas.addEventListener('mousemove', this.handleMouseMove);
+                canvas.addEventListener('mousedown', this.handleMouseDown);
+                canvas.addEventListener('mouseup', this.handleMouseUp);
+                canvas.addEventListener('mouseleave', this.handleMouseLeave);
+                canvas.addEventListener('wheel', this.handleWheel, { passive: false });
+
+                // Touch events
+                canvas.addEventListener('touchstart', this.handleTouchStart, { passive: false });
+                canvas.addEventListener('touchmove', this.handleTouchMove, { passive: false });
+                canvas.addEventListener('touchend', this.handleTouchEnd, { passive: false });
+
+                // Make canvas focusable for keyboard events
+                canvas.setAttribute('tabindex', '0');
+                canvas.addEventListener('keydown', this.handleKeyDown);
+
+                // Touch state for pinch-to-zoom
+                this.touchState = {
+                    touches: [],
+                    initialPinchDistance: null,
+                    initialZoomLevel: 1,
+                    initialXRange: null,
+                    initialYRange: null
+                };
+
+                DebugLog.log('EDITOR_INIT', 'ChartEditor initialized');
+            }
+
+            setConfig(config) {
+                DebugLog.log('RECEIVED_FROM_PYTHON', { lines: config.lines }, 'info');
+
+                // Parse incoming lines
+                const incomingLines = config.lines ?
+                    config.lines.map(line => line ? line.map(p => ({x: p[0], y: p[1]})) : [])
+                    : [];
+
+                // ONLY accept new data if NOT in editing mode
+                // This prevents Python reruns from overwriting user's unsaved changes
+                if (!this.isEditing) {
+                    this.lines = incomingLines;
+                    this.savedLines = deepCloneLines(incomingLines);
+                    DebugLog.log('DATA_APPLIED', 'Applied data from Python (not editing)', 'info');
+                } else {
+                    DebugLog.log('DATA_IGNORED', 'Ignored Python data (currently editing)', 'warn');
+                }
+
+                // Update other config (always apply these)
+                if (config.xRange) this.xRange = config.xRange;
+                if (config.yRange) this.yRange = config.yRange;
+                if (config.colors) this.colors = config.colors;
+                if (config.gridSnap) this.gridSnap = config.gridSnap;
+                if (config.width) this.canvas.width = config.width;
+                if (config.height) this.canvas.height = config.height;
+
+                // Constraints
+                this.disabled = config.disabled || false;
+                this.minPoints = config.minPoints || 0;
+                this.maxPoints = config.maxPoints || null;
+
+                // Zoom settings
+                this.zoomEnabled = config.zoomEnabled || false;
+                this.readOnly = config.readOnly || false;
+
+                // Store original ranges for reset (only on first config or explicit reset)
+                if (!this._originalRangesSet) {
+                    this.originalXRange = [...this.xRange];
+                    this.originalYRange = [...this.yRange];
+                    this._originalRangesSet = true;
+                }
+
+                // Update visual state for disabled/readOnly
+                if (this.disabled) {
+                    this.canvas.style.cursor = 'default';
+                    this.canvas.classList.add('disabled');
+                } else {
+                    this.canvas.classList.remove('disabled');
+                }
+
+                if (this.readOnly) {
+                    this.canvas.classList.add('read-only');
+                } else {
+                    this.canvas.classList.remove('read-only');
+                }
+
+                // Show/hide zoom controls
+                const zoomControls = document.getElementById('zoomControls');
+                if (this.zoomEnabled) {
+                    zoomControls.classList.remove('hidden');
+                } else {
+                    zoomControls.classList.add('hidden');
+                }
+
+                // Show/hide and setup range selector
+                const rangeSelector = document.getElementById('rangeSelector');
+                if (this.zoomEnabled) {
+                    rangeSelector.classList.remove('hidden');
+                    rangeSelector.style.width = (this.canvas.width - 10) + 'px';
+                    this.rangeSelector.enabled = true;
+                    this.setupRangeSelector();
+                    this.updateRangeSelector();
+                } else {
+                    rangeSelector.classList.add('hidden');
+                    this.rangeSelector.enabled = false;
+                }
+
+                // Update UI elements
+                document.getElementById('chartTitle').textContent = config.title || '';
+                document.getElementById('xLabel').textContent = config.xLabel || '';
+                document.getElementById('yLabel').textContent = config.yLabel || '';
+
+                document.getElementById('xMin').value = this.xRange[0];
+                document.getElementById('xMax').value = this.xRange[1];
+                document.getElementById('yMin').value = this.yRange[0];
+                document.getElementById('yMax').value = this.yRange[1];
+
+                this.updateLineSelector();
+                this.draw();
+
+                // Initialize history with loaded data
+                this.initHistory();
+            }
+
+            // Enter editing mode (show Save/Cancel buttons)
+            enterEditMode() {
+                const wasEditing = this.isEditing;
+                if (!this.isEditing) {
+                    this.isEditing = true;
+                    this.canvas.classList.add('editing');
+                    document.getElementById('editControls').classList.remove('hidden');
+                    DebugLog.log('EDIT_MODE', 'Entered editing mode');
+                }
+
+                // Push history state before modification (if we were already editing, or this is first edit)
+                if (!wasEditing) {
+                    // Initialize history if this is first edit
+                    this.initHistory();
+                } else {
+                    // Push current state before the upcoming modification
+                    this.pushHistory();
+                }
+            }
+
+            // Save changes to Python
+            saveChanges() {
+                const data = this.lines.map(line => line.map(p => [p.x, p.y]));
+                setComponentValue(data);
+                this.savedLines = deepCloneLines(this.lines);
+                this.isEditing = false;
+                this.canvas.classList.remove('editing');
+                document.getElementById('editControls').classList.add('hidden');
+                DebugLog.log('CHANGES_SAVED', 'Saved changes to Python');
+            }
+
+            // Cancel changes and revert to saved state
+            cancelChanges() {
+                this.lines = deepCloneLines(this.savedLines);
+                this.isEditing = false;
+                this.canvas.classList.remove('editing');
+                document.getElementById('editControls').classList.add('hidden');
+                this.updateLineSelector();
+                this.draw();
+                DebugLog.log('CHANGES_CANCELLED', 'Reverted to saved state');
+            }
+
+            // Push current state to history stack
+            pushHistory() {
+                // Remove any redo states
+                if (this.historyIndex < this.historyStack.length - 1) {
+                    this.historyStack = this.historyStack.slice(0, this.historyIndex + 1);
+                }
+
+                // Add current state
+                this.historyStack.push(deepCloneLines(this.lines));
+                this.historyIndex = this.historyStack.length - 1;
+
+                // Limit history size
+                if (this.historyStack.length > this.maxHistorySize) {
+                    this.historyStack.shift();
+                    this.historyIndex--;
+                }
+
+                this.updateUndoRedoButtons();
+            }
+
+            // Undo last action
+            undo() {
+                if (this.historyIndex <= 0) return false;
+
+                this.historyIndex--;
+                this.lines = deepCloneLines(this.historyStack[this.historyIndex]);
+                this.updateLineSelector();
+                this.draw();
+                this.updateUndoRedoButtons();
+
+                DebugLog.log('UNDO', {
+                    historyIndex: this.historyIndex,
+                    stackSize: this.historyStack.length
+                });
+
+                return true;
+            }
+
+            // Redo last undone action
+            redo() {
+                if (this.historyIndex >= this.historyStack.length - 1) return false;
+
+                this.historyIndex++;
+                this.lines = deepCloneLines(this.historyStack[this.historyIndex]);
+                this.updateLineSelector();
+                this.draw();
+                this.updateUndoRedoButtons();
+
+                DebugLog.log('REDO', {
+                    historyIndex: this.historyIndex,
+                    stackSize: this.historyStack.length
+                });
+
+                return true;
+            }
+
+            // Check if undo/redo is available
+            canUndo() {
+                return this.historyIndex > 0;
+            }
+
+            canRedo() {
+                return this.historyIndex < this.historyStack.length - 1;
+            }
+
+            // Update undo/redo button states
+            updateUndoRedoButtons() {
+                const undoBtn = document.getElementById('btnUndo');
+                const redoBtn = document.getElementById('btnRedo');
+
+                if (undoBtn) {
+                    undoBtn.disabled = !this.canUndo();
+                    undoBtn.style.opacity = this.canUndo() ? '1' : '0.5';
+                }
+                if (redoBtn) {
+                    redoBtn.disabled = !this.canRedo();
+                    redoBtn.style.opacity = this.canRedo() ? '1' : '0.5';
+                }
+            }
+
+            // Initialize history with current state
+            initHistory() {
+                this.historyStack = [deepCloneLines(this.lines)];
+                this.historyIndex = 0;
+                this.updateUndoRedoButtons();
+            }
+
+            // Smooth zoom animation
+            animateZoom(targetXMin, targetXMax, targetYMin, targetYMax, duration = 200) {
+                // Cancel any existing animation
+                if (this.zoomAnimationId) {
+                    cancelAnimationFrame(this.zoomAnimationId);
+                }
+
+                const startXRange = [...this.xRange];
+                const startYRange = [...this.yRange];
+                const startTime = performance.now();
+
+                const easeOutCubic = (t) => 1 - Math.pow(1 - t, 3);
+
+                const animate = (currentTime) => {
+                    const elapsed = currentTime - startTime;
+                    const progress = Math.min(elapsed / duration, 1);
+                    const easedProgress = easeOutCubic(progress);
+
+                    // Interpolate ranges
+                    const currentXMin = startXRange[0] + (targetXMin - startXRange[0]) * easedProgress;
+                    const currentXMax = startXRange[1] + (targetXMax - startXRange[1]) * easedProgress;
+                    const currentYMin = startYRange[0] + (targetYMin - startYRange[0]) * easedProgress;
+                    const currentYMax = startYRange[1] + (targetYMax - startYRange[1]) * easedProgress;
+
+                    // Apply intermediate zoom without notification
+                    this.setZoomRange(currentXMin, currentXMax, currentYMin, currentYMax, false);
+
+                    if (progress < 1) {
+                        this.zoomAnimationId = requestAnimationFrame(animate);
+                    } else {
+                        // Animation complete - send final state
+                        this.zoomAnimationId = null;
+                        this.setZoomRange(targetXMin, targetXMax, targetYMin, targetYMax, true);
+                    }
+                };
+
+                this.zoomAnimationId = requestAnimationFrame(animate);
+            }
+
+            updateLineSelector() {
+                const selector = document.getElementById('lineSelector');
+                selector.innerHTML = '';
+
+                if (this.lines.length === 0) {
+                    this.lines.push([]);
+                }
+
+                this.lines.forEach((line, i) => {
+                    const btn = document.createElement('button');
+                    btn.className = 'line-btn' + (i === this.activeLineIndex ? ' active' : '');
+                    btn.textContent = `Line ${i + 1} (${line.length} pts)`;
+                    btn.style.borderColor = this.colors[i % this.colors.length];
+                    if (i === this.activeLineIndex) {
+                        btn.style.backgroundColor = this.colors[i % this.colors.length];
+                    } else {
+                        btn.style.color = this.colors[i % this.colors.length];
+                    }
+                    btn.addEventListener('click', () => {
+                        this.activeLineIndex = i;
+                        DebugLog.log('LINE_SELECTED', `Switched to Line ${i + 1}`);
+                        this.updateLineSelector();
+                        this.draw();
+                    });
+                    selector.appendChild(btn);
+                });
+
+                if (this.lines.length < 5) {
+                    const addBtn = document.createElement('button');
+                    addBtn.className = 'add-line-btn';
+                    addBtn.textContent = '+ Add Line';
+                    addBtn.addEventListener('click', () => {
+                        this.enterEditMode();
+                        this.lines.push([]);
+                        this.activeLineIndex = this.lines.length - 1;
+                        DebugLog.log('LINE_ADDED', `Added Line ${this.lines.length}`);
+                        this.updateLineSelector();
+                        this.draw();
+                    });
+                    selector.appendChild(addBtn);
+                }
+            }
+
+            dataToCanvas(x, y) {
+                const chartWidth = this.canvas.width - this.padding.left - this.padding.right;
+                const chartHeight = this.canvas.height - this.padding.top - this.padding.bottom;
+
+                // Guard against division by zero
+                const xRangeSize = this.xRange[1] - this.xRange[0];
+                const yRangeSize = this.yRange[1] - this.yRange[0];
+
+                if (xRangeSize === 0 || yRangeSize === 0) {
+                    return {x: this.padding.left, y: this.padding.top};
+                }
+
+                const canvasX = this.padding.left +
+                    ((x - this.xRange[0]) / xRangeSize) * chartWidth;
+                const canvasY = this.padding.top +
+                    (1 - (y - this.yRange[0]) / yRangeSize) * chartHeight;
+
+                return {x: canvasX, y: canvasY};
+            }
+
+            canvasToData(canvasX, canvasY) {
+                const chartWidth = this.canvas.width - this.padding.left - this.padding.right;
+                const chartHeight = this.canvas.height - this.padding.top - this.padding.bottom;
+
+                // Guard against division by zero
+                if (chartWidth === 0 || chartHeight === 0) {
+                    return {x: this.xRange[0], y: this.yRange[0]};
+                }
+
+                let x = this.xRange[0] +
+                    ((canvasX - this.padding.left) / chartWidth) * (this.xRange[1] - this.xRange[0]);
+                let y = this.yRange[0] +
+                    (1 - (canvasY - this.padding.top) / chartHeight) * (this.yRange[1] - this.yRange[0]);
+
+                if (this.gridSnap) {
+                    const xStep = (this.xRange[1] - this.xRange[0]) * this.gridSnap[0] / 100;
+                    const yStep = (this.yRange[1] - this.yRange[0]) * this.gridSnap[1] / 100;
+                    // Guard against zero step sizes
+                    if (xStep > 0) x = Math.round(x / xStep) * xStep;
+                    if (yStep > 0) y = Math.round(y / yStep) * yStep;
+                }
+
+                x = Math.max(this.xRange[0], Math.min(this.xRange[1], x));
+                y = Math.max(this.yRange[0], Math.min(this.yRange[1], y));
+
+                return {x, y};
+            }
+
+            hasConflictingX(lineIndex, x, excludeIndex = -1) {
+                const line = this.lines[lineIndex];
+                if (!line) return false;
+
+                const tolerance = (this.xRange[1] - this.xRange[0]) * 0.01;
+
+                for (let i = 0; i < line.length; i++) {
+                    if (i === excludeIndex) continue;
+                    if (Math.abs(line[i].x - x) < tolerance) {
+                        return true;
+                    }
+                }
+                return false;
+            }
+
+            findPointAt(canvasX, canvasY) {
+                // First check the active line (priority for overlapping points)
+                const activeLine = this.lines[this.activeLineIndex];
+                if (activeLine) {
+                    for (let pointIndex = 0; pointIndex < activeLine.length; pointIndex++) {
+                        const point = activeLine[pointIndex];
+                        const canvasPoint = this.dataToCanvas(point.x, point.y);
+                        const dist = Math.sqrt(
+                            Math.pow(canvasX - canvasPoint.x, 2) +
+                            Math.pow(canvasY - canvasPoint.y, 2)
+                        );
+                        if (dist <= this.hoverRadius) {
+                            return {lineIndex: this.activeLineIndex, pointIndex};
+                        }
+                    }
+                }
+
+                // Then check other lines
+                for (let lineIndex = 0; lineIndex < this.lines.length; lineIndex++) {
+                    if (lineIndex === this.activeLineIndex) continue;
+                    const line = this.lines[lineIndex];
+                    for (let pointIndex = 0; pointIndex < line.length; pointIndex++) {
+                        const point = line[pointIndex];
+                        const canvasPoint = this.dataToCanvas(point.x, point.y);
+                        const dist = Math.sqrt(
+                            Math.pow(canvasX - canvasPoint.x, 2) +
+                            Math.pow(canvasY - canvasPoint.y, 2)
+                        );
+                        if (dist <= this.hoverRadius) {
+                            return {lineIndex, pointIndex};
+                        }
+                    }
+                }
+                return null;
+            }
+
+            isInChartArea(canvasX, canvasY) {
+                return canvasX >= this.padding.left &&
+                       canvasX <= this.canvas.width - this.padding.right &&
+                       canvasY >= this.padding.top &&
+                       canvasY <= this.canvas.height - this.padding.bottom;
+            }
+
+            handleMouseMove(e) {
+                const rect = this.canvas.getBoundingClientRect();
+                const canvasX = e.clientX - rect.left;
+                const canvasY = e.clientY - rect.top;
+
+                // Handle panning
+                if (this.isPanning) {
+                    this.updatePan(canvasX, canvasY);
+                    return;
+                }
+
+                if (this.draggingPoint && !this.isDragging) {
+                    const moved = Math.sqrt(
+                        Math.pow(canvasX - this.dragStartX, 2) +
+                        Math.pow(canvasY - this.dragStartY, 2)
+                    );
+                    if (moved > 5) {
+                        this.isDragging = true;
+                        DebugLog.log('DRAG_START', {
+                            line: this.draggingPoint.lineIndex + 1,
+                            point: this.draggingPoint.pointIndex
+                        });
+                    }
+                }
+
+                if (this.isDragging && this.draggingPoint) {
+                    const dataPos = this.canvasToData(canvasX, canvasY);
+                    const line = this.lines[this.draggingPoint.lineIndex];
+                    line[this.draggingPoint.pointIndex] = dataPos;
+
+                    const pointData = line[this.draggingPoint.pointIndex];
+                    line.sort((a, b) => a.x - b.x);
+                    const newIndex = line.indexOf(pointData);
+                    if (newIndex !== this.draggingPoint.pointIndex) {
+                        this.draggingPoint.pointIndex = newIndex;
+                    }
+
+                    this.draw();
+                    this.showTooltip(canvasX, canvasY, dataPos, this.draggingPoint.lineIndex);
+                } else {
+                    const point = this.findPointAt(canvasX, canvasY);
+                    if (point) {
+                        this.hoveredPoint = point;
+                        this.canvas.style.cursor = 'pointer';
+                        const p = this.lines[point.lineIndex][point.pointIndex];
+                        this.showTooltip(canvasX, canvasY, p, point.lineIndex);
+                    } else if (this.isInChartArea(canvasX, canvasY)) {
+                        this.hoveredPoint = null;
+                        this.canvas.style.cursor = 'crosshair';
+                        this.hideTooltip();
+                    } else {
+                        this.hoveredPoint = null;
+                        this.canvas.style.cursor = 'default';
+                        this.hideTooltip();
+                    }
+                    this.draw();
+                }
+            }
+
+            handleMouseDown(e) {
+                // Block all interactions if disabled
+                if (this.disabled) {
+                    DebugLog.log('INTERACTION_BLOCKED', 'Chart is disabled', 'warn');
+                    return;
+                }
+
+                const rect = this.canvas.getBoundingClientRect();
+                const canvasX = e.clientX - rect.left;
+                const canvasY = e.clientY - rect.top;
+
+                // Check for pan mode:
+                // - In read-only mode: any drag pans
+                // - In edit mode with zoom: Ctrl+drag or middle mouse pans
+                const shouldPan = this.zoomEnabled && this.isInChartArea(canvasX, canvasY) && (
+                    this.readOnly ||
+                    e.ctrlKey ||
+                    e.metaKey ||
+                    e.button === 1 // Middle mouse button
+                );
+
+                if (shouldPan) {
+                    e.preventDefault();
+                    this.startPan(canvasX, canvasY);
+                    DebugLog.log('PAN_START', { x: canvasX, y: canvasY });
+                    return;
+                }
+
+                // Read-only mode: no editing interactions
+                if (this.readOnly) {
+                    return;
+                }
+
+                const point = this.findPointAt(canvasX, canvasY);
+
+                if (point) {
+                    this.draggingPoint = point;
+                    this.dragStartTime = Date.now();
+                    this.dragStartX = canvasX;
+                    this.dragStartY = canvasY;
+                    this.activeLineIndex = point.lineIndex;
+
+                    const p = this.lines[point.lineIndex][point.pointIndex];
+                    this.dragOriginalPos = {x: p.x, y: p.y};
+
+                    DebugLog.log('MOUSEDOWN_ON_POINT', {
+                        line: point.lineIndex + 1,
+                        pointIndex: point.pointIndex,
+                        coords: {x: p.x.toFixed(2), y: p.y.toFixed(2)}
+                    });
+
+                    this.updateLineSelector();
+                } else if (this.isInChartArea(canvasX, canvasY)) {
+                    const dataPos = this.canvasToData(canvasX, canvasY);
+
+                    while (this.lines.length <= this.activeLineIndex) {
+                        this.lines.push([]);
+                    }
+
+                    if (this.hasConflictingX(this.activeLineIndex, dataPos.x)) {
+                        DebugLog.log('ADD_BLOCKED', {
+                            reason: 'X coordinate too close to existing point',
+                            coords: {x: dataPos.x.toFixed(2), y: dataPos.y.toFixed(2)}
+                        }, 'warn');
+                        this.showErrorFlash('Cannot add - X too close to existing point');
+                        return;
+                    }
+
+                    // Check max points constraint
+                    const currentLine = this.lines[this.activeLineIndex] || [];
+                    if (this.maxPoints !== null && currentLine.length >= this.maxPoints) {
+                        DebugLog.log('ADD_BLOCKED', {
+                            reason: 'Maximum points reached',
+                            maxPoints: this.maxPoints,
+                            currentPoints: currentLine.length
+                        }, 'warn');
+                        this.showErrorFlash(`Cannot add - Maximum ${this.maxPoints} points per line`);
+                        return;
+                    }
+
+                    this.enterEditMode();
+                    this.lines[this.activeLineIndex].push(dataPos);
+                    this.lines[this.activeLineIndex].sort((a, b) => a.x - b.x);
+
+                    DebugLog.log('POINT_ADDED', {
+                        line: this.activeLineIndex + 1,
+                        coords: {x: dataPos.x.toFixed(2), y: dataPos.y.toFixed(2)},
+                        totalPoints: this.lines[this.activeLineIndex].length
+                    });
+
+                    this.updateLineSelector();
+                    this.draw();
+                }
+            }
+
+            handleMouseUp(e) {
+                // End panning
+                if (this.isPanning) {
+                    this.endPan();
+                    DebugLog.log('PAN_END', {
+                        xRange: this.xRange.map(v => v.toFixed(2)),
+                        yRange: this.yRange.map(v => v.toFixed(2))
+                    });
+                    return;
+                }
+
+                if (this.draggingPoint) {
+                    const rect = this.canvas.getBoundingClientRect();
+                    const canvasX = e.clientX - rect.left;
+                    const canvasY = e.clientY - rect.top;
+
+                    const elapsed = Date.now() - this.dragStartTime;
+                    const moved = Math.sqrt(
+                        Math.pow(canvasX - this.dragStartX, 2) +
+                        Math.pow(canvasY - this.dragStartY, 2)
+                    );
+
+                    if (elapsed < 300 && moved < 5) {
+                        // Check min points constraint before removing
+                        const currentLine = this.lines[this.draggingPoint.lineIndex];
+                        if (this.minPoints > 0 && currentLine.length <= this.minPoints) {
+                            DebugLog.log('REMOVE_BLOCKED', {
+                                reason: 'Minimum points required',
+                                minPoints: this.minPoints,
+                                currentPoints: currentLine.length
+                            }, 'warn');
+                            this.showErrorFlash(`Cannot remove - Minimum ${this.minPoints} points required`);
+                        } else {
+                            this.enterEditMode();
+                            const removedPoint = this.lines[this.draggingPoint.lineIndex][this.draggingPoint.pointIndex];
+                            this.lines[this.draggingPoint.lineIndex].splice(this.draggingPoint.pointIndex, 1);
+
+                            DebugLog.log('POINT_REMOVED', {
+                                line: this.draggingPoint.lineIndex + 1,
+                                coords: {x: removedPoint.x.toFixed(2), y: removedPoint.y.toFixed(2)},
+                                remaining: this.lines[this.draggingPoint.lineIndex].length
+                            });
+                        }
+                    } else if (this.isDragging) {
+                        const line = this.lines[this.draggingPoint.lineIndex];
+                        const currentPoint = line[this.draggingPoint.pointIndex];
+                        const currentIndex = line.findIndex(p => p === currentPoint);
+
+                        if (this.hasConflictingX(this.draggingPoint.lineIndex, currentPoint.x, currentIndex)) {
+                            line[currentIndex] = {...this.dragOriginalPos};
+                            line.sort((a, b) => a.x - b.x);
+
+                            DebugLog.log('DRAG_REVERTED', {
+                                reason: 'X coordinate too close to existing point',
+                                restoredTo: {x: this.dragOriginalPos.x.toFixed(2), y: this.dragOriginalPos.y.toFixed(2)}
+                            }, 'warn');
+                            this.showErrorFlash('Cannot move - X too close to existing point');
+                        } else {
+                            this.enterEditMode();
+                            DebugLog.log('DRAG_END', {
+                                line: this.draggingPoint.lineIndex + 1,
+                                newCoords: {x: currentPoint.x.toFixed(2), y: currentPoint.y.toFixed(2)}
+                            });
+                        }
+                    }
+
+                    this.isDragging = false;
+                    this.draggingPoint = null;
+                    this.dragOriginalPos = null;
+                    this.updateLineSelector();
+                    this.draw();
+                }
+            }
+
+            handleMouseLeave() {
+                // End panning on mouse leave
+                if (this.isPanning) {
+                    this.endPan();
+                }
+
+                if (this.isDragging && this.draggingPoint && this.dragOriginalPos) {
+                    const line = this.lines[this.draggingPoint.lineIndex];
+                    line[this.draggingPoint.pointIndex] = {...this.dragOriginalPos};
+                    line.sort((a, b) => a.x - b.x);
+
+                    DebugLog.log('DRAG_REVERTED', {
+                        reason: 'Mouse left canvas',
+                        restoredTo: {x: this.dragOriginalPos.x.toFixed(2), y: this.dragOriginalPos.y.toFixed(2)}
+                    }, 'warn');
+                }
+                this.isDragging = false;
+                this.draggingPoint = null;
+                this.dragOriginalPos = null;
+                this.hoveredPoint = null;
+                this.hideTooltip();
+                this.draw();
+            }
+
+            handleKeyDown(e) {
+                // Handle undo/redo shortcuts (always available if not disabled)
+                if ((e.ctrlKey || e.metaKey) && !this.disabled && !this.readOnly) {
+                    if (e.key === 'z' && !e.shiftKey) {
+                        e.preventDefault();
+                        if (this.undo()) {
+                            this.enterEditMode();
+                        }
+                        return;
+                    }
+                    if ((e.key === 'z' && e.shiftKey) || e.key === 'y') {
+                        e.preventDefault();
+                        if (this.redo()) {
+                            this.enterEditMode();
+                        }
+                        return;
+                    }
+                }
+
+                // Block keyboard interactions if disabled or read-only (except Escape)
+                if (this.disabled && e.key !== 'Escape') return;
+
+                const activeLine = this.lines[this.activeLineIndex] || [];
+                const step = e.shiftKey ? 10 : 1; // Larger steps with Shift
+                const xStep = (this.xRange[1] - this.xRange[0]) * step / 100;
+                const yStep = (this.yRange[1] - this.yRange[0]) * step / 100;
+
+                switch (e.key) {
+                    case 'Tab':
+                        // Cycle through points
+                        e.preventDefault();
+                        if (activeLine.length === 0) return;
+
+                        if (this.selectedPoint === null || this.selectedPoint.lineIndex !== this.activeLineIndex) {
+                            // Select first point
+                            this.selectedPoint = {lineIndex: this.activeLineIndex, pointIndex: 0};
+                        } else if (e.shiftKey) {
+                            // Previous point
+                            this.selectedPoint.pointIndex--;
+                            if (this.selectedPoint.pointIndex < 0) {
+                                this.selectedPoint.pointIndex = activeLine.length - 1;
+                            }
+                        } else {
+                            // Next point
+                            this.selectedPoint.pointIndex++;
+                            if (this.selectedPoint.pointIndex >= activeLine.length) {
+                                this.selectedPoint.pointIndex = 0;
+                            }
+                        }
+                        DebugLog.log('KEYBOARD_SELECT', {point: this.selectedPoint.pointIndex + 1});
+                        this.draw();
+                        break;
+
+                    case 'ArrowLeft':
+                    case 'ArrowRight':
+                    case 'ArrowUp':
+                    case 'ArrowDown':
+                        if (this.readOnly) return;
+                        if (this.selectedPoint === null) return;
+                        e.preventDefault();
+
+                        const point = activeLine[this.selectedPoint.pointIndex];
+                        if (!point) return;
+
+                        let newX = point.x;
+                        let newY = point.y;
+
+                        if (e.key === 'ArrowLeft') newX -= xStep;
+                        if (e.key === 'ArrowRight') newX += xStep;
+                        if (e.key === 'ArrowUp') newY += yStep;
+                        if (e.key === 'ArrowDown') newY -= yStep;
+
+                        // Clamp to range
+                        newX = Math.max(this.xRange[0], Math.min(this.xRange[1], newX));
+                        newY = Math.max(this.yRange[0], Math.min(this.yRange[1], newY));
+
+                        // Check for X conflicts (excluding current point)
+                        if (this.hasConflictingX(this.activeLineIndex, newX, this.selectedPoint.pointIndex)) {
+                            this.showErrorFlash('Cannot move - X too close to existing point');
+                            return;
+                        }
+
+                        this.enterEditMode();
+                        point.x = newX;
+                        point.y = newY;
+
+                        // Re-sort and find new index
+                        activeLine.sort((a, b) => a.x - b.x);
+                        this.selectedPoint.pointIndex = activeLine.indexOf(point);
+
+                        DebugLog.log('KEYBOARD_MOVE', {
+                            point: this.selectedPoint.pointIndex + 1,
+                            newCoords: {x: newX.toFixed(2), y: newY.toFixed(2)}
+                        });
+                        this.updateLineSelector();
+                        this.draw();
+                        break;
+
+                    case 'Delete':
+                    case 'Backspace':
+                        if (this.readOnly) return;
+                        if (this.selectedPoint === null) return;
+                        e.preventDefault();
+
+                        // Check min points constraint
+                        if (this.minPoints > 0 && activeLine.length <= this.minPoints) {
+                            this.showErrorFlash(`Cannot remove - Minimum ${this.minPoints} points required`);
+                            return;
+                        }
+
+                        this.enterEditMode();
+                        const removedPoint = activeLine[this.selectedPoint.pointIndex];
+                        activeLine.splice(this.selectedPoint.pointIndex, 1);
+
+                        DebugLog.log('KEYBOARD_DELETE', {
+                            coords: {x: removedPoint.x.toFixed(2), y: removedPoint.y.toFixed(2)},
+                            remaining: activeLine.length
+                        });
+
+                        // Adjust selection
+                        if (activeLine.length === 0) {
+                            this.selectedPoint = null;
+                        } else if (this.selectedPoint.pointIndex >= activeLine.length) {
+                            this.selectedPoint.pointIndex = activeLine.length - 1;
+                        }
+
+                        this.updateLineSelector();
+                        this.draw();
+                        break;
+
+                    case 'Enter':
+                    case ' ':
+                        if (this.readOnly) return;
+                        e.preventDefault();
+
+                        // Add point at center of visible range
+                        const centerX = (this.xRange[0] + this.xRange[1]) / 2;
+                        const centerY = (this.yRange[0] + this.yRange[1]) / 2;
+
+                        // Check max points constraint
+                        if (this.maxPoints !== null && activeLine.length >= this.maxPoints) {
+                            this.showErrorFlash(`Cannot add - Maximum ${this.maxPoints} points per line`);
+                            return;
+                        }
+
+                        // Check X conflicts
+                        if (this.hasConflictingX(this.activeLineIndex, centerX)) {
+                            this.showErrorFlash('Cannot add - X too close to existing point');
+                            return;
+                        }
+
+                        this.enterEditMode();
+                        activeLine.push({x: centerX, y: centerY});
+                        activeLine.sort((a, b) => a.x - b.x);
+
+                        // Select the new point
+                        const newPointIndex = activeLine.findIndex(p => p.x === centerX && p.y === centerY);
+                        this.selectedPoint = {lineIndex: this.activeLineIndex, pointIndex: newPointIndex};
+
+                        DebugLog.log('KEYBOARD_ADD', {
+                            coords: {x: centerX.toFixed(2), y: centerY.toFixed(2)},
+                            totalPoints: activeLine.length
+                        });
+
+                        this.updateLineSelector();
+                        this.draw();
+                        break;
+
+                    case 'Escape':
+                        // Deselect point
+                        this.selectedPoint = null;
+                        DebugLog.log('KEYBOARD_DESELECT', 'Point deselected');
+                        this.draw();
+                        break;
+                }
+            }
+
+            // Touch event handlers for mobile support
+            getTouchPosition(touch) {
+                const rect = this.canvas.getBoundingClientRect();
+                return {
+                    x: touch.clientX - rect.left,
+                    y: touch.clientY - rect.top
+                };
+            }
+
+            getPinchDistance(touch1, touch2) {
+                const dx = touch2.clientX - touch1.clientX;
+                const dy = touch2.clientY - touch1.clientY;
+                return Math.sqrt(dx * dx + dy * dy);
+            }
+
+            getPinchCenter(touch1, touch2) {
+                const rect = this.canvas.getBoundingClientRect();
+                return {
+                    x: (touch1.clientX + touch2.clientX) / 2 - rect.left,
+                    y: (touch1.clientY + touch2.clientY) / 2 - rect.top
+                };
+            }
+
+            handleTouchStart(e) {
+                e.preventDefault();
+
+                if (e.touches.length === 1) {
+                    // Single touch - treat like mouse down
+                    const pos = this.getTouchPosition(e.touches[0]);
+                    this.handleMouseDown({
+                        clientX: e.touches[0].clientX,
+                        clientY: e.touches[0].clientY,
+                        button: 0,
+                        ctrlKey: false,
+                        metaKey: false,
+                        preventDefault: () => {}
+                    });
+                } else if (e.touches.length === 2 && this.zoomEnabled) {
+                    // Two finger pinch - start zoom gesture
+                    this.touchState.initialPinchDistance = this.getPinchDistance(e.touches[0], e.touches[1]);
+                    this.touchState.initialZoomLevel = this.zoomLevel;
+                    this.touchState.initialXRange = [...this.xRange];
+                    this.touchState.initialYRange = [...this.yRange];
+                    this.touchState.pinchCenter = this.getPinchCenter(e.touches[0], e.touches[1]);
+
+                    // Cancel any ongoing drag
+                    this.isDragging = false;
+                    this.draggingPoint = null;
+                    this.isPanning = false;
+
+                    DebugLog.log('PINCH_START', {
+                        distance: this.touchState.initialPinchDistance.toFixed(0),
+                        center: this.touchState.pinchCenter
+                    });
+                }
+            }
+
+            handleTouchMove(e) {
+                e.preventDefault();
+
+                if (e.touches.length === 1 && !this.touchState.initialPinchDistance) {
+                    // Single touch - treat like mouse move
+                    this.handleMouseMove({
+                        clientX: e.touches[0].clientX,
+                        clientY: e.touches[0].clientY
+                    });
+                } else if (e.touches.length === 2 && this.zoomEnabled && this.touchState.initialPinchDistance) {
+                    // Pinch zoom
+                    const currentDistance = this.getPinchDistance(e.touches[0], e.touches[1]);
+                    const scale = currentDistance / this.touchState.initialPinchDistance;
+
+                    // Calculate new ranges (zoom centered on pinch center)
+                    const centerPos = this.canvasToData(
+                        this.touchState.pinchCenter.x,
+                        this.touchState.pinchCenter.y
+                    );
+
+                    const initialXSize = this.touchState.initialXRange[1] - this.touchState.initialXRange[0];
+                    const initialYSize = this.touchState.initialYRange[1] - this.touchState.initialYRange[0];
+
+                    const newXSize = initialXSize / scale;
+                    const newYSize = initialYSize / scale;
+
+                    // Calculate new ranges centered on pinch center
+                    const xFraction = (centerPos.x - this.touchState.initialXRange[0]) / initialXSize;
+                    const yFraction = (centerPos.y - this.touchState.initialYRange[0]) / initialYSize;
+
+                    const newXMin = centerPos.x - xFraction * newXSize;
+                    const newXMax = newXMin + newXSize;
+                    const newYMin = centerPos.y - yFraction * newYSize;
+                    const newYMax = newYMin + newYSize;
+
+                    this.setZoomRange(newXMin, newXMax, newYMin, newYMax, false);
+                }
+            }
+
+            handleTouchEnd(e) {
+                if (this.touchState.initialPinchDistance && e.touches.length < 2) {
+                    // End pinch zoom
+                    DebugLog.log('PINCH_END', {
+                        zoomLevel: this.zoomLevel.toFixed(2)
+                    });
+
+                    // Send final zoom state
+                    this.sendZoomState();
+
+                    this.touchState.initialPinchDistance = null;
+                    this.touchState.initialXRange = null;
+                    this.touchState.initialYRange = null;
+                    this.touchState.pinchCenter = null;
+                }
+
+                if (e.touches.length === 0) {
+                    // All touches ended - treat like mouse up
+                    this.handleMouseUp({
+                        clientX: e.changedTouches[0]?.clientX || 0,
+                        clientY: e.changedTouches[0]?.clientY || 0
+                    });
+                }
+            }
+
+            showTooltip(x, y, dataPoint, lineIndex = null) {
+                const tooltip = document.getElementById('tooltip');
+                let text = `(${dataPoint.x.toFixed(2)}, ${dataPoint.y.toFixed(2)})`;
+                if (lineIndex !== null) {
+                    text = `Line ${lineIndex + 1}: ${text}`;
+                }
+                tooltip.textContent = text;
+                tooltip.style.left = (x + 15) + 'px';
+                tooltip.style.top = (y - 10) + 'px';
+                tooltip.style.display = 'block';
+            }
+
+            hideTooltip() {
+                document.getElementById('tooltip').style.display = 'none';
+            }
+
+            showErrorFlash(message) {
+                this.canvas.classList.add('error-flash');
+                const errorEl = document.getElementById('errorMessage');
+                if (message) errorEl.textContent = message;
+                errorEl.classList.add('visible');
+
+                setTimeout(() => {
+                    this.canvas.classList.remove('error-flash');
+                    errorEl.classList.remove('visible');
+                }, 800);
+            }
+
+            updateRange(axis, minOrMax, value, inputElement) {
+                const val = parseFloat(value);
+                if (isNaN(val)) {
+                    if (inputElement) {
+                        inputElement.classList.add('invalid');
+                        setTimeout(() => inputElement.classList.remove('invalid'), 1500);
+                    }
+                    return;
+                }
+
+                // Validate min < max
+                let newMin, newMax, isValid = true;
+                if (axis === 'x') {
+                    newMin = minOrMax === 'min' ? val : this.xRange[0];
+                    newMax = minOrMax === 'max' ? val : this.xRange[1];
+                    if (newMin >= newMax) {
+                        isValid = false;
+                    }
+                } else {
+                    newMin = minOrMax === 'min' ? val : this.yRange[0];
+                    newMax = minOrMax === 'max' ? val : this.yRange[1];
+                    if (newMin >= newMax) {
+                        isValid = false;
+                    }
+                }
+
+                if (!isValid) {
+                    // Show error and revert
+                    if (inputElement) {
+                        inputElement.classList.add('invalid');
+                        setTimeout(() => inputElement.classList.remove('invalid'), 1500);
+                        // Revert to previous value
+                        if (axis === 'x') {
+                            inputElement.value = minOrMax === 'min' ? this.xRange[0] : this.xRange[1];
+                        } else {
+                            inputElement.value = minOrMax === 'min' ? this.yRange[0] : this.yRange[1];
+                        }
+                    }
+                    this.showErrorFlash('Min must be less than Max');
+                    DebugLog.log('RANGE_INVALID', {axis, minOrMax, value: val, reason: 'min >= max'}, 'warn');
+                    return;
+                }
+
+                // Apply valid range
+                if (axis === 'x') {
+                    if (minOrMax === 'min') this.xRange[0] = val;
+                    else this.xRange[1] = val;
+                } else {
+                    if (minOrMax === 'min') this.yRange[0] = val;
+                    else this.yRange[1] = val;
+                }
+
+                DebugLog.log('RANGE_CHANGED', {axis, minOrMax, value: val});
+                this.draw();
+            }
+
+            // Find all points that overlap with points from other lines
+            findOverlappingPoints() {
+                const overlaps = new Map(); // key: "x,y" -> array of {lineIndex, pointIndex}
+
+                // Grid cell size for grouping (1% of range)
+                const xRangeSize = this.xRange[1] - this.xRange[0];
+                const yRangeSize = this.yRange[1] - this.yRange[0];
+
+                // Guard against zero range - use fallback cell sizes
+                const xCell = xRangeSize > 0 ? xRangeSize * 0.01 : 1;
+                const yCell = yRangeSize > 0 ? yRangeSize * 0.01 : 1;
+
+                // Group all points by grid cell
+                const grid = new Map();
+
+                this.lines.forEach((line, lineIndex) => {
+                    line.forEach((point, pointIndex) => {
+                        // Round to grid cell
+                        const cellX = Math.round(point.x / xCell);
+                        const cellY = Math.round(point.y / yCell);
+                        const key = `${cellX},${cellY}`;
+
+                        if (!grid.has(key)) {
+                            grid.set(key, []);
+                        }
+                        grid.get(key).push({lineIndex, pointIndex, x: point.x, y: point.y});
+                    });
+                });
+
+                // Find cells with points from multiple different lines
+                grid.forEach((points, key) => {
+                    // Get unique line indices at this location
+                    const uniqueLines = new Set(points.map(p => p.lineIndex));
+
+                    if (uniqueLines.size > 1) {
+                        // Multiple lines share this location
+                        overlaps.set(key, points);
+                    }
+                });
+
+                return overlaps;
+            }
+
+            // Check if dark mode is active
+            isDarkMode() {
+                return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches;
+            }
+
+            draw() {
+                const ctx = this.ctx;
+                const width = this.canvas.width;
+                const height = this.canvas.height;
+                const isDark = this.isDarkMode();
+
+                ctx.fillStyle = isDark ? '#1e1e1e' : '#fafafa';
+                ctx.fillRect(0, 0, width, height);
+
+                this.drawGrid();
+                this.drawAxes();
+
+                // Find overlapping points
+                const overlaps = this.findOverlappingPoints();
+                const overlappingSet = new Set();
+                overlaps.forEach(points => {
+                    points.forEach(p => overlappingSet.add(`${p.lineIndex},${p.pointIndex}`));
+                });
+
+                // Set up clipping region to prevent lines from drawing outside chart area
+                const chartWidth = this.canvas.width - this.padding.left - this.padding.right;
+                const chartHeight = this.canvas.height - this.padding.top - this.padding.bottom;
+                ctx.save();
+                ctx.beginPath();
+                ctx.rect(this.padding.left, this.padding.top, chartWidth, chartHeight);
+                ctx.clip();
+
+                // Create draw order: active line last (on top)
+                const drawOrder = [];
+                for (let i = 0; i < this.lines.length; i++) {
+                    if (i !== this.activeLineIndex) {
+                        drawOrder.push(i);
+                    }
+                }
+                drawOrder.push(this.activeLineIndex);
+
+                // Draw lines and dots in order (active line last = on top)
+                drawOrder.forEach(lineIndex => {
+                    const line = this.lines[lineIndex];
+                    if (!line || line.length === 0) return;
+
+                    const color = this.colors[lineIndex % this.colors.length];
+                    const isActiveLine = lineIndex === this.activeLineIndex;
+
+                    // Draw connecting lines
+                    if (line.length >= 2) {
+                        ctx.beginPath();
+                        ctx.strokeStyle = color;
+                        ctx.lineWidth = isActiveLine ? this.lineWidth + 1 : this.lineWidth;
+                        if (!isActiveLine) {
+                            ctx.globalAlpha = 0.6;
+                        }
+
+                        const firstPoint = this.dataToCanvas(line[0].x, line[0].y);
+                        ctx.moveTo(firstPoint.x, firstPoint.y);
+
+                        for (let i = 1; i < line.length; i++) {
+                            const point = this.dataToCanvas(line[i].x, line[i].y);
+                            ctx.lineTo(point.x, point.y);
+                        }
+                        ctx.stroke();
+                        ctx.globalAlpha = 1;
+                    }
+
+                    // Draw dots
+                    line.forEach((point, pointIndex) => {
+                        const canvasPoint = this.dataToCanvas(point.x, point.y);
+                        const isHovered = this.hoveredPoint &&
+                            this.hoveredPoint.lineIndex === lineIndex &&
+                            this.hoveredPoint.pointIndex === pointIndex;
+                        const isDragging = this.draggingPoint &&
+                            this.draggingPoint.lineIndex === lineIndex &&
+                            this.draggingPoint.pointIndex === pointIndex;
+                        const isSelected = this.selectedPoint &&
+                            this.selectedPoint.lineIndex === lineIndex &&
+                            this.selectedPoint.pointIndex === pointIndex;
+                        const isOverlapping = overlappingSet.has(`${lineIndex},${pointIndex}`);
+
+                        // Selected point indicator (keyboard navigation)
+                        if (isSelected) {
+                            ctx.beginPath();
+                            ctx.arc(canvasPoint.x, canvasPoint.y, this.dotRadius + 6, 0, Math.PI * 2);
+                            ctx.strokeStyle = color;
+                            ctx.lineWidth = 2;
+                            ctx.setLineDash([4, 2]);
+                            ctx.stroke();
+                            ctx.setLineDash([]);
+                        }
+
+                        // Hover/drag highlight
+                        if (isHovered || isDragging) {
+                            ctx.beginPath();
+                            ctx.arc(canvasPoint.x, canvasPoint.y, this.dotRadius + 4, 0, Math.PI * 2);
+                            ctx.fillStyle = color + '40';
+                            ctx.fill();
+                        }
+
+                        // Draw dot (slightly smaller for non-active lines)
+                        const radius = isActiveLine ? this.dotRadius : this.dotRadius - 1;
+                        ctx.beginPath();
+                        ctx.arc(canvasPoint.x, canvasPoint.y, radius, 0, Math.PI * 2);
+                        ctx.fillStyle = isActiveLine ? color : color + 'CC';
+                        ctx.fill();
+                        ctx.strokeStyle = '#fff';
+                        ctx.lineWidth = 2;
+                        ctx.stroke();
+
+                        // Draw overlap indicator (concentric dashed ring)
+                        if (isOverlapping) {
+                            ctx.beginPath();
+                            ctx.arc(canvasPoint.x, canvasPoint.y, this.dotRadius + 6, 0, Math.PI * 2);
+                            ctx.strokeStyle = '#333';
+                            ctx.lineWidth = 2;
+                            ctx.setLineDash([3, 3]);
+                            ctx.stroke();
+                            ctx.setLineDash([]);
+                        }
+                    });
+                });
+
+                // Draw overlap badges (count indicator) - only once per overlap location
+                overlaps.forEach((points, key) => {
+                    // Count unique lines at this location
+                    const uniqueLines = new Set(points.map(p => p.lineIndex));
+                    const lineCount = uniqueLines.size;
+
+                    if (lineCount > 1) {
+                        // Use the first point's position for the badge
+                        const firstPt = points[0];
+                        const canvasPoint = this.dataToCanvas(firstPt.x, firstPt.y);
+
+                        // Draw badge
+                        const badgeX = canvasPoint.x + this.dotRadius + 4;
+                        const badgeY = canvasPoint.y - this.dotRadius - 4;
+
+                        ctx.beginPath();
+                        ctx.arc(badgeX, badgeY, 8, 0, Math.PI * 2);
+                        ctx.fillStyle = '#333';
+                        ctx.fill();
+
+                        ctx.fillStyle = '#fff';
+                        ctx.font = 'bold 10px sans-serif';
+                        ctx.textAlign = 'center';
+                        ctx.textBaseline = 'middle';
+                        ctx.fillText(lineCount.toString(), badgeX, badgeY);
+                    }
+                });
+
+                // Restore canvas state (remove clipping)
+                ctx.restore();
+            }
+
+            drawGrid() {
+                const ctx = this.ctx;
+                const chartWidth = this.canvas.width - this.padding.left - this.padding.right;
+                const chartHeight = this.canvas.height - this.padding.top - this.padding.bottom;
+                const isDark = this.isDarkMode();
+
+                ctx.strokeStyle = isDark ? '#333' : '#e0e0e0';
+                ctx.lineWidth = 1;
+
+                for (let i = 0; i <= 10; i++) {
+                    const x = this.padding.left + (i / 10) * chartWidth;
+                    ctx.beginPath();
+                    ctx.moveTo(x, this.padding.top);
+                    ctx.lineTo(x, this.padding.top + chartHeight);
+                    ctx.stroke();
+                }
+
+                for (let i = 0; i <= 10; i++) {
+                    const y = this.padding.top + (i / 10) * chartHeight;
+                    ctx.beginPath();
+                    ctx.moveTo(this.padding.left, y);
+                    ctx.lineTo(this.padding.left + chartWidth, y);
+                    ctx.stroke();
+                }
+            }
+
+            drawAxes() {
+                const ctx = this.ctx;
+                const chartWidth = this.canvas.width - this.padding.left - this.padding.right;
+                const chartHeight = this.canvas.height - this.padding.top - this.padding.bottom;
+                const isDark = this.isDarkMode();
+
+                ctx.fillStyle = isDark ? '#a0a0a0' : '#666';
+                ctx.font = '11px -apple-system, BlinkMacSystemFont, sans-serif';
+
+                for (let i = 0; i <= 5; i++) {
+                    const x = this.padding.left + (i / 5) * chartWidth;
+                    const value = this.xRange[0] + (i / 5) * (this.xRange[1] - this.xRange[0]);
+                    ctx.textAlign = 'center';
+                    ctx.fillText(value.toFixed(0), x, this.canvas.height - this.padding.bottom + 15);
+                }
+
+                for (let i = 0; i <= 5; i++) {
+                    const y = this.padding.top + (i / 5) * chartHeight;
+                    const value = this.yRange[1] - (i / 5) * (this.yRange[1] - this.yRange[0]);
+                    ctx.textAlign = 'right';
+                    ctx.fillText(value.toFixed(0), this.padding.left - 5, y + 4);
+                }
+            }
+
+            // ============================================
+            // ZOOM / PAN METHODS
+            // ============================================
+
+            handleWheel(e) {
+                if (!this.zoomEnabled) return;
+
+                e.preventDefault();
+
+                const rect = this.canvas.getBoundingClientRect();
+                const canvasX = e.clientX - rect.left;
+                const canvasY = e.clientY - rect.top;
+
+                // Only zoom if cursor is in chart area
+                if (!this.isInChartArea(canvasX, canvasY)) return;
+
+                // Get data coordinates at cursor position (zoom center)
+                const dataPos = this.canvasToData(canvasX, canvasY);
+
+                // Determine zoom direction and factor (0.97/1.03 = 3% per tick for gentler zoom)
+                const zoomFactor = e.deltaY < 0 ? 0.97 : 1.03; // Scroll up = zoom in
+
+                // Calculate new ranges centered on cursor position
+                const xRangeSize = this.xRange[1] - this.xRange[0];
+                const yRangeSize = this.yRange[1] - this.yRange[0];
+
+                // Guard against division by zero
+                if (xRangeSize === 0 || yRangeSize === 0) return;
+
+                const newXRangeSize = xRangeSize * zoomFactor;
+                const newYRangeSize = yRangeSize * zoomFactor;
+
+                // Calculate cursor position as fraction of current range
+                const xFraction = (dataPos.x - this.xRange[0]) / xRangeSize;
+                const yFraction = (dataPos.y - this.yRange[0]) / yRangeSize;
+
+                // New range keeps cursor at same visual position
+                const newXMin = dataPos.x - xFraction * newXRangeSize;
+                const newXMax = newXMin + newXRangeSize;
+                const newYMin = dataPos.y - yFraction * newYRangeSize;
+                const newYMax = newYMin + newYRangeSize;
+
+                // Apply zoom instantly (animation causes issues with trackpad inertial scrolling)
+                this.setZoomRange(newXMin, newXMax, newYMin, newYMax);
+            }
+
+            setZoomRange(xMin, xMax, yMin, yMax, notify = true) {
+                // Enforce minimum zoom (don't zoom in too far - minimum 5% of original range)
+                const originalXSize = this.originalXRange[1] - this.originalXRange[0];
+                const originalYSize = this.originalYRange[1] - this.originalYRange[0];
+
+                // Guard against zero original range
+                if (originalXSize === 0 || originalYSize === 0) return;
+
+                const minXRange = originalXSize * 0.05;
+                const minYRange = originalYSize * 0.05;
+
+                if (xMax - xMin < minXRange) {
+                    const center = (xMax + xMin) / 2;
+                    xMin = center - minXRange / 2;
+                    xMax = center + minXRange / 2;
+                }
+
+                if (yMax - yMin < minYRange) {
+                    const center = (yMax + yMin) / 2;
+                    yMin = center - minYRange / 2;
+                    yMax = center + minYRange / 2;
+                }
+
+                // Enforce maximum zoom out (don't exceed original range)
+                const origXSize = this.originalXRange[1] - this.originalXRange[0];
+                const origYSize = this.originalYRange[1] - this.originalYRange[0];
+
+                if (xMax - xMin > origXSize) {
+                    xMin = this.originalXRange[0];
+                    xMax = this.originalXRange[1];
+                }
+
+                if (yMax - yMin > origYSize) {
+                    yMin = this.originalYRange[0];
+                    yMax = this.originalYRange[1];
+                }
+
+                // Clamp to stay within original bounds (no panning outside data range)
+                if (xMin < this.originalXRange[0]) {
+                    const shift = this.originalXRange[0] - xMin;
+                    xMin = this.originalXRange[0];
+                    xMax = Math.min(xMax + shift, this.originalXRange[1]);
+                }
+                if (xMax > this.originalXRange[1]) {
+                    const shift = xMax - this.originalXRange[1];
+                    xMax = this.originalXRange[1];
+                    xMin = Math.max(xMin - shift, this.originalXRange[0]);
+                }
+
+                if (yMin < this.originalYRange[0]) {
+                    const shift = this.originalYRange[0] - yMin;
+                    yMin = this.originalYRange[0];
+                    yMax = Math.min(yMax + shift, this.originalYRange[1]);
+                }
+                if (yMax > this.originalYRange[1]) {
+                    const shift = yMax - this.originalYRange[1];
+                    yMax = this.originalYRange[1];
+                    yMin = Math.max(yMin - shift, this.originalYRange[0]);
+                }
+
+                this.xRange = [xMin, xMax];
+                this.yRange = [yMin, yMax];
+
+                // Calculate zoom level (based on X axis)
+                const currentXSize = xMax - xMin;
+                // Guard against division by zero
+                this.zoomLevel = currentXSize > 0 ? originalXSize / currentXSize : 1;
+
+                // Update UI
+                this.updateZoomInfo();
+                this.updateRangeInputs();
+                // Update range selector (if not currently being dragged)
+                if (!this.rangeSelector.dragging) {
+                    this.updateRangeSelector();
+                }
+                this.draw();
+
+                // Notify callback
+                if (notify && this.onZoomCallback) {
+                    this.onZoomCallback({
+                        xRange: [...this.xRange],
+                        yRange: [...this.yRange],
+                        zoomLevel: this.zoomLevel
+                    });
+                }
+
+                // Send zoom state to Python
+                if (notify) {
+                    this.sendZoomState();
+                }
+
+                DebugLog.log('ZOOM_CHANGED', {
+                    xRange: [xMin.toFixed(2), xMax.toFixed(2)],
+                    yRange: [yMin.toFixed(2), yMax.toFixed(2)],
+                    zoomLevel: this.zoomLevel.toFixed(2)
+                });
+            }
+
+            sendZoomState() {
+                // Include lines data with zoom events to prevent data loss
+                const linesData = this.lines.map(line => line.map(p => [p.x, p.y]));
+                sendMessageToStreamlit("streamlit:setComponentValue", {
+                    value: {
+                        type: 'zoom',
+                        lines: linesData,
+                        xRange: this.xRange,
+                        yRange: this.yRange,
+                        zoomLevel: this.zoomLevel
+                    }
+                });
+            }
+
+            updateZoomInfo() {
+                const zoomInfo = document.getElementById('zoomInfo');
+                if (zoomInfo) {
+                    zoomInfo.textContent = `${Math.round(this.zoomLevel * 100)}%`;
+                }
+            }
+
+            updateRangeInputs() {
+                document.getElementById('xMin').value = this.xRange[0].toFixed(2);
+                document.getElementById('xMax').value = this.xRange[1].toFixed(2);
+                document.getElementById('yMin').value = this.yRange[0].toFixed(2);
+                document.getElementById('yMax').value = this.yRange[1].toFixed(2);
+            }
+
+            zoomIn() {
+                if (!this.zoomEnabled) return;
+
+                const xCenter = (this.xRange[0] + this.xRange[1]) / 2;
+                const yCenter = (this.yRange[0] + this.yRange[1]) / 2;
+                const xHalf = (this.xRange[1] - this.xRange[0]) / 2 * 0.8;
+                const yHalf = (this.yRange[1] - this.yRange[0]) / 2 * 0.8;
+
+                this.animateZoom(
+                    xCenter - xHalf,
+                    xCenter + xHalf,
+                    yCenter - yHalf,
+                    yCenter + yHalf
+                );
+            }
+
+            zoomOut() {
+                if (!this.zoomEnabled) return;
+
+                const xCenter = (this.xRange[0] + this.xRange[1]) / 2;
+                const yCenter = (this.yRange[0] + this.yRange[1]) / 2;
+                const xHalf = (this.xRange[1] - this.xRange[0]) / 2 * 1.25;
+                const yHalf = (this.yRange[1] - this.yRange[0]) / 2 * 1.25;
+
+                this.animateZoom(
+                    xCenter - xHalf,
+                    xCenter + xHalf,
+                    yCenter - yHalf,
+                    yCenter + yHalf
+                );
+            }
+
+            resetZoom() {
+                if (!this.zoomEnabled) return;
+
+                this.animateZoom(
+                    this.originalXRange[0],
+                    this.originalXRange[1],
+                    this.originalYRange[0],
+                    this.originalYRange[1]
+                );
+
+                DebugLog.log('ZOOM_RESET', 'Reset to original range');
+            }
+
+            fitToData() {
+                if (!this.zoomEnabled) return;
+
+                // Find data bounds
+                let minX = Infinity, maxX = -Infinity;
+                let minY = Infinity, maxY = -Infinity;
+
+                this.lines.forEach(line => {
+                    line.forEach(point => {
+                        minX = Math.min(minX, point.x);
+                        maxX = Math.max(maxX, point.x);
+                        minY = Math.min(minY, point.y);
+                        maxY = Math.max(maxY, point.y);
+                    });
+                });
+
+                if (minX === Infinity) {
+                    // No data, reset to original
+                    this.resetZoom();
+                    return;
+                }
+
+                // Add 10% padding
+                const xPadding = (maxX - minX) * 0.1 || 1;
+                const yPadding = (maxY - minY) * 0.1 || 1;
+
+                this.animateZoom(
+                    minX - xPadding,
+                    maxX + xPadding,
+                    minY - yPadding,
+                    maxY + yPadding
+                );
+
+                DebugLog.log('FIT_TO_DATA', {
+                    xRange: [minX - xPadding, maxX + xPadding],
+                    yRange: [minY - yPadding, maxY + yPadding]
+                });
+            }
+
+            // Programmatic zoom to specific range (for external control / sync)
+            zoomTo(xMin, xMax, yMin, yMax, notify = true) {
+                this.setZoomRange(xMin, xMax, yMin, yMax, notify);
+            }
+
+            // Start panning
+            startPan(canvasX, canvasY) {
+                this.isPanning = true;
+                this.panStartX = canvasX;
+                this.panStartY = canvasY;
+                this.panStartXRange = [...this.xRange];
+                this.panStartYRange = [...this.yRange];
+                this.canvas.classList.add('panning');
+            }
+
+            // Update pan
+            updatePan(canvasX, canvasY) {
+                if (!this.isPanning) return;
+
+                const chartWidth = this.canvas.width - this.padding.left - this.padding.right;
+                const chartHeight = this.canvas.height - this.padding.top - this.padding.bottom;
+
+                // Calculate how much to pan in data units
+                const dx = canvasX - this.panStartX;
+                const dy = canvasY - this.panStartY;
+
+                const xRangeSize = this.panStartXRange[1] - this.panStartXRange[0];
+                const yRangeSize = this.panStartYRange[1] - this.panStartYRange[0];
+
+                const dataXShift = -(dx / chartWidth) * xRangeSize;
+                const dataYShift = (dy / chartHeight) * yRangeSize;
+
+                this.setZoomRange(
+                    this.panStartXRange[0] + dataXShift,
+                    this.panStartXRange[1] + dataXShift,
+                    this.panStartYRange[0] + dataYShift,
+                    this.panStartYRange[1] + dataYShift,
+                    false // Don't notify during drag
+                );
+            }
+
+            // End panning
+            endPan() {
+                if (this.isPanning) {
+                    this.isPanning = false;
+                    this.canvas.classList.remove('panning');
+                    // Notify on pan end
+                    if (this.onZoomCallback) {
+                        this.onZoomCallback({
+                            xRange: [...this.xRange],
+                            yRange: [...this.yRange],
+                            zoomLevel: this.zoomLevel
+                        });
+                    }
+                    this.sendZoomState();
+                }
+            }
+
+            // ============================================
+            // RANGE SELECTOR (X-axis zoom brush)
+            // ============================================
+
+            setupRangeSelector() {
+                if (this._rangeSelectorSetup) return;
+                this._rangeSelectorSetup = true;
+
+                const viewport = document.getElementById('rangeSelectorViewport');
+                const handleLeft = document.getElementById('rangeHandleLeft');
+                const handleRight = document.getElementById('rangeHandleRight');
+                const track = document.querySelector('.range-selector-track');
+
+                // Mouse down on viewport (drag entire range)
+                viewport.addEventListener('mousedown', (e) => {
+                    if (e.target === handleLeft || e.target === handleRight) return;
+                    e.preventDefault();
+                    this.rangeSelector.dragging = 'viewport';
+                    this.rangeSelector.startX = e.clientX;
+                    this.rangeSelector.startLeft = parseFloat(viewport.style.left) || 0;
+                    this.rangeSelector.startWidth = parseFloat(viewport.style.width) || 100;
+                });
+
+                // Mouse down on left handle
+                handleLeft.addEventListener('mousedown', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    this.rangeSelector.dragging = 'left';
+                    this.rangeSelector.startX = e.clientX;
+                    this.rangeSelector.startLeft = parseFloat(viewport.style.left) || 0;
+                    this.rangeSelector.startWidth = parseFloat(viewport.style.width) || 100;
+                });
+
+                // Mouse down on right handle
+                handleRight.addEventListener('mousedown', (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    this.rangeSelector.dragging = 'right';
+                    this.rangeSelector.startX = e.clientX;
+                    this.rangeSelector.startLeft = parseFloat(viewport.style.left) || 0;
+                    this.rangeSelector.startWidth = parseFloat(viewport.style.width) || 100;
+                });
+
+                // Mouse move (global)
+                document.addEventListener('mousemove', (e) => {
+                    if (!this.rangeSelector.dragging) return;
+
+                    const trackRect = track.getBoundingClientRect();
+                    const trackWidth = trackRect.width;
+                    const dx = e.clientX - this.rangeSelector.startX;
+                    const dxPercent = (dx / trackWidth) * 100;
+
+                    let newLeft = this.rangeSelector.startLeft;
+                    let newWidth = this.rangeSelector.startWidth;
+
+                    if (this.rangeSelector.dragging === 'viewport') {
+                        // Move entire viewport
+                        newLeft = this.rangeSelector.startLeft + dxPercent;
+                        // Clamp to track bounds
+                        newLeft = Math.max(0, Math.min(100 - newWidth, newLeft));
+                    } else if (this.rangeSelector.dragging === 'left') {
+                        // Resize from left
+                        newLeft = this.rangeSelector.startLeft + dxPercent;
+                        newWidth = this.rangeSelector.startWidth - dxPercent;
+                        // Minimum width and bounds
+                        if (newWidth < 5) {
+                            newWidth = 5;
+                            newLeft = this.rangeSelector.startLeft + this.rangeSelector.startWidth - 5;
+                        }
+                        if (newLeft < 0) {
+                            newWidth += newLeft;
+                            newLeft = 0;
+                        }
+                    } else if (this.rangeSelector.dragging === 'right') {
+                        // Resize from right
+                        newWidth = this.rangeSelector.startWidth + dxPercent;
+                        // Minimum width and bounds
+                        if (newWidth < 5) newWidth = 5;
+                        if (newLeft + newWidth > 100) newWidth = 100 - newLeft;
+                    }
+
+                    // Apply to viewport
+                    viewport.style.left = newLeft + '%';
+                    viewport.style.width = newWidth + '%';
+
+                    // Update chart xRange
+                    this.applyRangeSelectorToChart(newLeft, newWidth);
+                });
+
+                // Mouse up (global)
+                document.addEventListener('mouseup', () => {
+                    if (this.rangeSelector.dragging) {
+                        this.rangeSelector.dragging = null;
+                        // Send final zoom state
+                        this.sendZoomState();
+                    }
+                });
+
+                // Double-click to reset
+                viewport.addEventListener('dblclick', () => {
+                    this.resetZoom();
+                });
+            }
+
+            applyRangeSelectorToChart(leftPercent, widthPercent) {
+                // Convert percentages to data coordinates
+                const fullRange = this.originalXRange[1] - this.originalXRange[0];
+
+                // Guard against zero full range
+                if (fullRange === 0) return;
+
+                const newXMin = this.originalXRange[0] + (leftPercent / 100) * fullRange;
+                const newXMax = this.originalXRange[0] + ((leftPercent + widthPercent) / 100) * fullRange;
+
+                // Update chart range (don't trigger range selector update to avoid loop)
+                this.xRange = [newXMin, newXMax];
+
+                // Calculate zoom level
+                const currentXSize = newXMax - newXMin;
+                // Guard against division by zero
+                this.zoomLevel = currentXSize > 0 ? fullRange / currentXSize : 1;
+
+                // Update UI
+                this.updateZoomInfo();
+                this.updateRangeLabels(newXMin, newXMax);
+                this.draw();
+            }
+
+            updateRangeSelector() {
+                if (!this.rangeSelector.enabled) return;
+
+                const viewport = document.getElementById('rangeSelectorViewport');
+                if (!viewport) return;
+
+                // Calculate viewport position from current xRange
+                const fullRange = this.originalXRange[1] - this.originalXRange[0];
+
+                // Guard against division by zero
+                if (fullRange === 0) {
+                    viewport.style.left = '0%';
+                    viewport.style.width = '100%';
+                    return;
+                }
+
+                const leftPercent = ((this.xRange[0] - this.originalXRange[0]) / fullRange) * 100;
+                const rightPercent = ((this.xRange[1] - this.originalXRange[0]) / fullRange) * 100;
+                const widthPercent = rightPercent - leftPercent;
+
+                // Clamp values
+                const clampedLeft = Math.max(0, Math.min(100, leftPercent));
+                const clampedWidth = Math.max(5, Math.min(100 - clampedLeft, widthPercent));
+
+                viewport.style.left = clampedLeft + '%';
+                viewport.style.width = clampedWidth + '%';
+
+                this.updateRangeLabels(this.xRange[0], this.xRange[1]);
+            }
+
+            updateRangeLabels(xMin, xMax) {
+                const labelLeft = document.getElementById('rangeLabelLeft');
+                const labelRight = document.getElementById('rangeLabelRight');
+                const labelCenter = document.getElementById('rangeLabelCenter');
+
+                if (labelLeft) labelLeft.textContent = Math.round(this.originalXRange[0]);
+                if (labelRight) labelRight.textContent = Math.round(this.originalXRange[1]);
+                if (labelCenter) labelCenter.textContent = `${Math.round(xMin)} - ${Math.round(xMax)}`;
+            }
+        }
+
+        // ============================================
+        // INITIALIZATION
+        // ============================================
+        let editor = null;
+
+        function init() {
+            DebugLog.log('INIT', 'Starting component initialization');
+
+            const canvas = document.getElementById('chartCanvas');
+            editor = new ChartEditor(canvas);
+
+            // Debug toggle button
+            document.getElementById('debugToggle').addEventListener('click', () => {
+                DebugLog.toggle();
+            });
+
+            // Save button
+            document.getElementById('btnSave').addEventListener('click', () => {
+                editor.saveChanges();
+            });
+
+            // Cancel button
+            document.getElementById('btnCancel').addEventListener('click', () => {
+                editor.cancelChanges();
+            });
+
+            // Undo/Redo buttons
+            document.getElementById('btnUndo').addEventListener('click', () => {
+                if (editor.undo()) {
+                    editor.enterEditMode();
+                }
+            });
+            document.getElementById('btnRedo').addEventListener('click', () => {
+                if (editor.redo()) {
+                    editor.enterEditMode();
+                }
+            });
+
+            // Zoom buttons
+            document.getElementById('btnZoomIn').addEventListener('click', () => {
+                editor.zoomIn();
+            });
+            document.getElementById('btnZoomOut').addEventListener('click', () => {
+                editor.zoomOut();
+            });
+            document.getElementById('btnFitData').addEventListener('click', () => {
+                editor.fitToData();
+            });
+            document.getElementById('btnResetZoom').addEventListener('click', () => {
+                editor.resetZoom();
+            });
+
+            // Range input changes
+            document.getElementById('xMin').addEventListener('change', (e) => {
+                editor.updateRange('x', 'min', e.target.value, e.target);
+            });
+            document.getElementById('xMax').addEventListener('change', (e) => {
+                editor.updateRange('x', 'max', e.target.value, e.target);
+            });
+            document.getElementById('yMin').addEventListener('change', (e) => {
+                editor.updateRange('y', 'min', e.target.value, e.target);
+            });
+            document.getElementById('yMax').addEventListener('change', (e) => {
+                editor.updateRange('y', 'max', e.target.value, e.target);
+            });
+
+            // Listen for messages from Streamlit
+            window.addEventListener('message', (event) => {
+                if (event.data.type === 'streamlit:render') {
+                    DebugLog.log('STREAMLIT_RENDER', 'Received render message from Streamlit');
+
+                    const args = event.data.args;
+                    editor.setConfig({
+                        lines: args.lines || [],
+                        xRange: args.xRange || [0, 100],
+                        yRange: args.yRange || [0, 1000],
+                        colors: args.colors || ["#FF6B6B", "#4ECDC4", "#45B7D1"],
+                        gridSnap: args.gridSnap || null,
+                        title: args.title || '',
+                        xLabel: args.xLabel || '',
+                        yLabel: args.yLabel || '',
+                        width: args.width || 700,
+                        height: args.height || 450,
+                        disabled: args.disabled || false,
+                        minPoints: args.minPoints || 0,
+                        maxPoints: args.maxPoints || null,
+                        zoomEnabled: args.zoomEnabled || false,
+                        readOnly: args.readOnly || false
+                    });
+
+                    setTimeout(() => {
+                        setFrameHeight(document.body.scrollHeight);
+                    }, 100);
+                }
+            });
+
+            setComponentReady();
+        }
+
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', init);
+        } else {
+            init();
+        }
+    </script>
+</body>
+</html>
