@@ -930,7 +930,7 @@ export class ChartEditor {
       case 'ArrowLeft':
       case 'ArrowRight':
       case 'ArrowUp':
-      case 'ArrowDown':
+      case 'ArrowDown': {
         // Move selected point
         if (this.readOnly || this.selectedPoint === null) return;
         e.preventDefault();
@@ -969,9 +969,10 @@ export class ChartEditor {
           coords: { x: newX.toFixed(2), y: newY.toFixed(2) }
         });
         break;
+      }
 
       case 'Delete':
-      case 'Backspace':
+      case 'Backspace': {
         // Remove selected point
         if (this.readOnly || this.selectedPoint === null) return;
         e.preventDefault();
@@ -1003,9 +1004,10 @@ export class ChartEditor {
 
         this.draw();
         break;
+      }
 
       case 'Enter':
-      case ' ':
+      case ' ': {
         // Add point at center
         if (this.readOnly) return;
         e.preventDefault();
@@ -1039,6 +1041,7 @@ export class ChartEditor {
         });
         this.draw();
         break;
+      }
 
       case 'Escape':
         // Deselect point

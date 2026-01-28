@@ -73,7 +73,9 @@ export function onStreamlitRender(
   callback: (args: unknown) => void
 ): () => void {
   const handler = (event: MessageEvent): void => {
+    // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
     if (event.data.type === 'streamlit:render') {
+      // eslint-disable-next-line @typescript-eslint/no-unsafe-member-access
       callback(event.data.args);
     }
   };
